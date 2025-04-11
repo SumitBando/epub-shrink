@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""epub-min: shrink EPUB files by cleaning unused assets and compressing images.
+"""epub-shrink: shrink EPUB files by cleaning unused assets and compressing images.
 
 Usage:
-    epub-min INPUT.epub [options]
+    epub-shrink INPUT.epub [options]
 
 Options:
     -o, --output FILE          Output file (default: INPUT stem + '-min.epub')
@@ -29,7 +29,7 @@ from PIL import Image
 DEFAULT_IGNORE = [
     "Generic Cross Sales.xhtml",
     "*.DS_Store",
-    "page_styles.css",
+    "*.epubcheck*",  # EPUBCheck files
 ]
 
 TMP_ROOT = pathlib.Path(tempfile.gettempdir())
@@ -58,7 +58,7 @@ def parse_args():
 
 
 def explode(epub_path: pathlib.Path) -> pathlib.Path:
-    tmp = TMP_ROOT / f"epub-min-{os.getpid()}"
+    tmp = TMP_ROOT / f"epub-shrink-{os.getpid()}"
     if tmp.exists():
         shutil.rmtree(tmp)
     tmp.mkdir()
