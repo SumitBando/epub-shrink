@@ -84,11 +84,11 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
     # Essential file types that should never be removed
     essential_patterns = [
         "*toc.ncx",                      # Navigation Control file for XML
-        "*nav.*",                        # Navigation Document (EPUB3)
         "Text/nav.xhtml",                # Common navigation file
-        # "*.css",                         # All stylesheets - ensure this is NOT commented out
-        # "Styles/*stylesheet*.css",       # Common stylesheet paths
-        "*[Cc]over*",                    # Cover images/files
+        # "*nav.*",                        # Navigation Document (EPUB3)
+        # "*.css",                       # All stylesheets
+        # "Styles/*stylesheet*.css",     # Common stylesheet paths
+        # "*[Cc]over*",                  # Cover images/files (now handled via metadata)
         "*[Cc]ontents*",                 # Table of contents
         "*logo*",                        # Logo images
         "META-INF/*",                    # Package metadata
@@ -96,6 +96,34 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
     
     # Build a list of files to keep
     files_to_keep = set(keep_hrefs)  # Start with all files from the spine
+    
+    # Find cover image from metadata
+    # First check meta tags with name="cover"
+    cover_id = None
+    for meta in tree.findall(".//opf:meta[@name='cover']", ns):
+        cover_id = meta.get("content")
+        if cover_id:
+            break
+    
+    # If cover ID found, find the corresponding item in manifest
+    if cover_id:
+        for item in tree.findall(".//opf:item", ns):
+            if item.get("id") == cover_id:
+                cover_href = item.get("href")
+                if cover_href:
+                    files_to_keep.add(cover_href)
+                    if verbose:
+                        print(f"Preserving cover image from metadata: {cover_href}")
+    
+    # Also check for cover in properties
+    for item in tree.findall(".//opf:item[@properties]", ns):
+        properties = item.get("properties", "").split()
+        if "cover-image" in properties:
+            cover_href = item.get("href")
+            if cover_href:
+                files_to_keep.add(cover_href)
+                if verbose:
+                    print(f"Preserving cover image from properties: {cover_href}")
     
     # First pass - identify essential files
     for href, node in list(manifest.items()):
@@ -111,8 +139,8 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
     referenced_files = set()
     
     # Extensions to look for in content
-    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp')
-    css_extensions = ('.css',)
+    # image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp')
+    # css_extensions = ('.css',)
     font_extensions = ('.ttf', '.otf', '.woff', '.woff2')
     
     # Regular expressions to find references in HTML
