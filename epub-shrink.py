@@ -359,15 +359,14 @@ def compress_image(path: pathlib.Path, quality: int, verbose=False):
         fmt = img.format
         if quality == 100:
             if fmt == "JPEG" and shutil.which("jpegoptim"):
-                if verbose:
-                    print(f"Processing: {path}")
                 subprocess.run(["jpegoptim", "--strip-all", str(path)],
                                stdout=subprocess.DEVNULL)
             elif fmt == "PNG" and shutil.which("oxipng"):
-                if verbose:
-                    print(f"Processing: {path}")
-                subprocess.run(["oxipng", "-o", "4", "--strip", "safe", str(path)],
-                               stdout=subprocess.DEVNULL)
+                oxipng_args = ["oxipng", "-o", "4", "--strip", "safe"]
+                # if not verbose:
+                oxipng_args.append("-q")
+                oxipng_args.append(str(path))
+                subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
             else:
                 img.save(path, format=fmt, optimize=True)
         else:
@@ -426,8 +425,8 @@ def main():
     q = args.quality
     while args.targetsize and final / 1024 > args.targetsize and q > 25:
         q = max(q - 5, 25)
-        if args.verbose:
-            print(f"Target not met, retrying lossy quality={q}")
+        # if args.verbose:
+        print(f"Target not met, retrying lossy quality={q}")
         compress_images(tmp, q, args.verbose)
         rebuild_epub(tmp, out)
         final = out.stat().st_size
