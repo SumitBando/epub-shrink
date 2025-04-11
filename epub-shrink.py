@@ -364,7 +364,7 @@ def compress_image(path: pathlib.Path, quality: int, verbose=False):
             elif fmt == "PNG" and shutil.which("oxipng"):
                 oxipng_args = ["oxipng", "-o", "4", "--strip", "safe"]
                 # if not verbose:
-                oxipng_args.append("-q")
+                # oxipng_args.append("-q")
                 oxipng_args.append(str(path))
                 subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
             else:
@@ -383,15 +383,68 @@ def compress_image(path: pathlib.Path, quality: int, verbose=False):
 
 
 def compress_images(root, quality, verbose=False):
-    img_paths = [*root.rglob("*.jpg"), *root.rglob("*.jpeg"), *root.rglob("*.png"), *root.rglob("*.webp")]
+    # Find all image paths
+    jpg_paths = [*root.rglob("*.jpg"), *root.rglob("*.jpeg")]
+    png_paths = list(root.rglob("*.png"))
+    webp_paths = list(root.rglob("*.webp"))
+    
     savings = []
+    
+    # Process PNG files by directory to optimize oxipng performance
+    if png_paths and shutil.which("oxipng") and quality == 100:
+        if verbose:
+            print("Processing PNG files by directory using oxipng...")
+        
+        # Group PNG files by directory
+        png_dirs = defaultdict(list)
+        for png_path in png_paths:
+            png_dirs[png_path.parent].append(png_path)
+        
+        # Process each directory of PNGs at once
+        for directory, files in png_dirs.items():
+            if verbose:
+                print(f"Optimizing {len(files)} PNG files in {directory.relative_to(root)}")
+            
+            # Record sizes before compression
+            before_sizes = {f: f.stat().st_size for f in files}
+            
+            # Run oxipng on all PNG files in the directory at once
+            oxipng_args = ["oxipng", "-o", "4", "--strip", "safe"]
+            if not verbose:
+                oxipng_args.append("-q")
+            
+            # Add all PNG files in this directory to the command
+            oxipng_args.extend([str(f) for f in files])
+            
+            subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
+            
+            # Record sizes after compression
+            for f in files:
+                before = before_sizes[f]
+                after = f.stat().st_size
+                if verbose:
+                    relative_path = f.relative_to(root)
+                    reduction_pct = (before - after) / before * 100 if before > 0 else 0
+                    print(f"{relative_path}: {human(before)} → {human(after)} ({reduction_pct:.1f}% reduction)")
+                savings.append((before, after))
+    
+    # Process remaining image types individually
+    img_paths = jpg_paths + webp_paths
+    if quality < 100:
+        # Also process PNG files individually if we're using a lossy quality setting
+        img_paths += png_paths
+    
     for p in img_paths:
+        if p in png_paths and quality == 100:
+            # Skip PNGs we've already processed
+            continue
         b, a = compress_image(p, quality, verbose)
         if verbose:
             relative_path = p.relative_to(root)
             reduction_pct = (b - a) / b * 100 if b > 0 else 0
             print(f"{relative_path}: {human(b)} → {human(a)} ({reduction_pct:.1f}% reduction)")
         savings.append((b, a))
+    
     return savings
 
 
@@ -426,7 +479,7 @@ def main():
     while args.targetsize and final / 1024 > args.targetsize and q > 25:
         q = max(q - 5, 25)
         # if args.verbose:
-        print(f"Target not met, retrying lossy quality={q}")
+        print(f"Target not met, current size {final}, retrying lossy quality={q}")
         compress_images(tmp, q, args.verbose)
         rebuild_epub(tmp, out)
         final = out.stat().st_size
