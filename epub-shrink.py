@@ -428,16 +428,67 @@ def compress_images(root, quality, verbose=False):
                     print(f"{relative_path}: {human(before)} → {human(after)} ({reduction_pct:.1f}% reduction)")
                 savings.append((before, after))
     
+    # Process JPEG files by directory to optimize jpegoptim performance
+    if jpg_paths and shutil.which("jpegoptim") and quality == 100:
+        if verbose:
+            print("Processing JPEG files by directory using jpegoptim...")
+        
+        # Group JPEG files by directory
+        jpg_dirs = defaultdict(list)
+        for jpg_path in jpg_paths:
+            jpg_dirs[jpg_path.parent].append(jpg_path)
+        
+        # Process each directory of JPEGs at once
+        for directory, files in jpg_dirs.items():
+            if verbose:
+                print(f"Optimizing {len(files)} JPEG files in {directory.relative_to(root)}")
+            
+            # Record sizes before compression
+            before_sizes = {f: f.stat().st_size for f in files}
+            
+            # Run jpegoptim on all JPEG files in the directory at once
+            jpegoptim_args = ["jpegoptim", "--strip-all"]
+            if not verbose:
+                jpegoptim_args.append("-q")
+            
+            # Add all JPEG files in this directory to the command
+            jpegoptim_args.extend([str(f) for f in files])
+            
+            subprocess.run(jpegoptim_args, stdout=subprocess.DEVNULL)
+            
+            # Record sizes after compression
+            for f in files:
+                before = before_sizes[f]
+                after = f.stat().st_size
+                if verbose:
+                    relative_path = f.relative_to(root)
+                    reduction_pct = (before - after) / before * 100 if before > 0 else 0
+                    print(f"{relative_path}: {human(before)} → {human(after)} ({reduction_pct:.1f}% reduction)")
+                savings.append((before, after))
+    
     # Process remaining image types individually
-    img_paths = jpg_paths + webp_paths
+    img_paths = webp_paths
     if quality < 100:
-        # Also process PNG files individually if we're using a lossy quality setting
-        img_paths += png_paths
+        # Also process files individually if we're using a lossy quality setting
+        img_paths += png_paths + jpg_paths
+    else:
+        # In lossless mode, process only files that weren't batch processed
+        img_paths += [p for p in webp_paths]
+        
+        # Add PNGs that weren't batch processed (if oxipng isn't available)
+        if not shutil.which("oxipng"):
+            img_paths += png_paths
+            
+        # Add JPEGs that weren't batch processed (if jpegoptim isn't available)
+        if not shutil.which("jpegoptim"):
+            img_paths += jpg_paths
     
     for p in img_paths:
-        if p in png_paths and quality == 100:
-            # Skip PNGs we've already processed
+        # Skip files we've already processed in batch
+        if ((p in png_paths and shutil.which("oxipng") and quality == 100) or 
+            (p in jpg_paths and shutil.which("jpegoptim") and quality == 100)):
             continue
+            
         b, a = compress_image(p, quality, verbose)
         if verbose:
             relative_path = p.relative_to(root)
@@ -479,7 +530,7 @@ def main():
     while args.targetsize and final / 1024 > args.targetsize and q > 25:
         q = max(q - 5, 25)
         # if args.verbose:
-        print(f"Target not met, current size {final}, retrying lossy quality={q}")
+        print(f"Target {args.targetsize} not met, current size {final}, retrying lossy quality={q}")
         compress_images(tmp, q, args.verbose)
         rebuild_epub(tmp, out)
         final = out.stat().st_size
