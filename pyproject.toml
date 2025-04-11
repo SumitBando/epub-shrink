@@ -1,0 +1,21 @@
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "epub-min"
+version = "0.1.0"
+description = "Shrink EPUB files by removing unused assets and compressing images"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "lxml",
+    "tinycss2",
+    "pillow-simd",
+    "fonttools",
+    "tqdm",
+]
+
+[project.scripts]
+epub-min = "epub_min:main"

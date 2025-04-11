@@ -1,0 +1,5 @@
+lxml
+tinycss2
+pillow
+fonttools
+tqdm
