@@ -260,20 +260,16 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
                     print(f"Preserving stylesheet: {href}")
     
     # Now remove files that are not in files_to_keep
-    removed = []
     for href, node in list(manifest.items()):
         if href not in files_to_keep:
-            removed.append(href)
+            if verbose:
+                print(f"Removing unreferenced file: {href}")
             file_path = root / href
             if file_path.exists():
                 file_path.unlink()
             parent = node.getparent() if hasattr(node, 'getparent') else tree.getroot()
             if node in parent:
                 parent.remove(node)
-    
-    if verbose and removed:
-        print("Unreferenced files:", *removed, sep="\n  ")
-    return removed
 
 
 def delete_ignored(patterns, root, tree, manifest, verbose=False):
