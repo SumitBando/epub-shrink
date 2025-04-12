@@ -87,17 +87,14 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
     files_to_keep = set(keep_hrefs)  # Start with all files from the spine
     
     # Check for guide entries in the OPF file and add them to files_to_keep
-    guide_refs = []
     for reference in tree.findall(".//opf:guide/opf:reference", ns):
         href = reference.get("href")
         if href:
-            files_to_keep.add(href)
-            guide_refs.append(href)
-            if verbose:
-                print(f"Preserving guide reference: {href} (type: {reference.get('type', 'unknown')})")
-    
-    if verbose and guide_refs:
-        print(f"Found {len(guide_refs)} guide references")
+            # Check if file isn't already in the keep set
+            if href not in files_to_keep:
+                files_to_keep.add(href)
+                if verbose:
+                    print(f"Adding file from guide: {href} (type: {reference.get('type', 'unknown')})")
     
     # First check meta tags with name="cover"
     cover_id = None
