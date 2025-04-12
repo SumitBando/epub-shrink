@@ -95,6 +95,19 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
     # Build a list of files to keep
     files_to_keep = set(keep_hrefs)  # Start with all files from the spine
     
+    # Check for guide entries in the OPF file and add them to files_to_keep
+    guide_refs = []
+    for reference in tree.findall(".//opf:guide/opf:reference", ns):
+        href = reference.get("href")
+        if href:
+            files_to_keep.add(href)
+            guide_refs.append(href)
+            if verbose:
+                print(f"Preserving guide reference: {href} (type: {reference.get('type', 'unknown')})")
+    
+    if verbose and guide_refs:
+        print(f"Found {len(guide_refs)} guide references")
+    
     # First check meta tags with name="cover"
     cover_id = None
     for meta in tree.findall(".//opf:meta[@name='cover']", ns):
@@ -356,13 +369,15 @@ def compress_image(path: pathlib.Path, quality: int, verbose=False):
         fmt = img.format
         if quality == 100:
             if fmt == "JPEG" and shutil.which("jpegoptim"):
-                subprocess.run(["jpegoptim", "--strip-all", str(path)],
-                               stdout=subprocess.DEVNULL)
+                cmd = ["jpegoptim", "--strip-all", str(path)]
+                print(f"Running: {' '.join(cmd)}")
+                subprocess.run(cmd, stdout=subprocess.DEVNULL)
             elif fmt == "PNG" and shutil.which("oxipng"):
                 oxipng_args = ["oxipng", "-o", "4", "--strip", "safe"]
                 # if not verbose:
                 # oxipng_args.append("-q")
                 oxipng_args.append(str(path))
+                print(f"Running: {' '.join(oxipng_args)}")
                 subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
             else:
                 img.save(path, format=fmt, optimize=True)
@@ -408,7 +423,7 @@ def compress_images(root, quality, verbose=False):
                 oxipng_args.append("-q")
             
             oxipng_args.extend([str(f) for f in files])
-            # print(oxipng_args)
+            print(oxipng_args)
             subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
             
             for f in files:
@@ -441,7 +456,7 @@ def compress_images(root, quality, verbose=False):
             
             # print(jpegoptim_args)
             jpegoptim_args.extend([str(f) for f in files])
-            
+            print(jpegoptim_args)
             subprocess.run(jpegoptim_args, stdout=subprocess.DEVNULL)
             
             for f in files:
