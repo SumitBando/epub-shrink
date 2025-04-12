@@ -60,13 +60,13 @@ def parse_args():
 
 
 def explode(epub_path: pathlib.Path) -> pathlib.Path:
-    tmp = TMP_ROOT / f"epub-shrink-{os.getpid()}"
-    if tmp.exists():
-        shutil.rmtree(tmp)
-    tmp.mkdir()
+    extract_dir = TMP_ROOT / f"epub-shrink-{os.getpid()}"
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir)
+    extract_dir.mkdir()
     with zipfile.ZipFile(epub_path) as z:
-        z.extractall(tmp)
-    return tmp
+        z.extractall(extract_dir)
+    return extract_dir
 
 
 def load_opf(root: pathlib.Path):
@@ -487,12 +487,12 @@ def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
                 z.write(file, file.relative_to(root))
 
 
-def process_epub(epub_path, tmp_dir, quality, out_path, ignore_patterns, verbose=False, keep_files=None):
+def process_epub(epub_path, extract_dir, quality, out_path, ignore_patterns, verbose=False, keep_files=None):
     """Process an EPUB file with the given quality setting.
     
     Args:
         epub_path: Path to the original EPUB file
-        tmp_dir: Directory to extract to (or None to create a new one)
+        extract_dir: Directory to extract to (or None to create a new one)
         quality: Image quality (0-100)
         out_path: Output path for the compressed EPUB (if None, will be generated based on quality)
         ignore_patterns: List of patterns to ignore
@@ -500,11 +500,11 @@ def process_epub(epub_path, tmp_dir, quality, out_path, ignore_patterns, verbose
         keep_files: Optional pre-computed list of files to keep (skip reference analysis if provided)
         
     Returns:
-        Tuple of (tmp_dir, final_size, keep_files, out_path)
+        Tuple of (extract_dir, final_size, keep_files, out_path)
     """
-    # Extract the EPUB if tmp_dir is not provided
-    if tmp_dir is None:
-        tmp_dir = explode(epub_path)
+    # Extract the EPUB if extract_dir is not provided
+    if extract_dir is None:
+        extract_dir = explode(epub_path)
     
     # If out_path is not provided, generate based on quality
     if out_path is None:
@@ -514,17 +514,17 @@ def process_epub(epub_path, tmp_dir, quality, out_path, ignore_patterns, verbose
             out_path = epub_path.with_stem(f"{epub_path.stem}-q{quality}")
     
     # Load and process OPF file
-    opf_path, tree, manifest, ns = load_opf(tmp_dir)
+    opf_path, tree, manifest, ns = load_opf(extract_dir)
     
     # If we don't have pre-computed keep_files, perform reference analysis
     if keep_files is None:
         if verbose:
             print("Performing reference analysis...")
         # Apply cleanup steps to determine which files to keep
-        remove_unreferenced(manifest, tree, ns, tmp_dir, verbose)
+        remove_unreferenced(manifest, tree, ns, extract_dir, verbose)
         delete_ignored(DEFAULT_IGNORE + (ignore_patterns or []),
-                      tmp_dir, tree, manifest, verbose)
-        remove_unreferenced_fonts(tmp_dir, manifest, verbose)
+                      extract_dir, tree, manifest, verbose)
+        remove_unreferenced_fonts(extract_dir, manifest, verbose)
         
         # Store the list of files that survived reference analysis
         keep_files = set(manifest.keys())
@@ -540,7 +540,7 @@ def process_epub(epub_path, tmp_dir, quality, out_path, ignore_patterns, verbose
         for href, node in list(manifest.items()):
             if href not in keep_files:
                 to_remove.append(href)
-                file_path = tmp_dir / href
+                file_path = extract_dir / href
                 if file_path.exists():
                     file_path.unlink()
                 parent = node.getparent() if hasattr(node, 'getparent') else tree.getroot()
@@ -554,13 +554,13 @@ def process_epub(epub_path, tmp_dir, quality, out_path, ignore_patterns, verbose
     tree.write(opf_path, encoding="utf-8", xml_declaration=True)
     
     # Compress images with the specified quality
-    compress_images(tmp_dir, quality, verbose)
+    compress_images(extract_dir, quality, verbose)
     
     # Rebuild the EPUB
-    rebuild_epub(tmp_dir, out_path)
+    rebuild_epub(extract_dir, out_path)
     final_size = out_path.stat().st_size
     
-    return tmp_dir, final_size, keep_files, out_path
+    return extract_dir, final_size, keep_files, out_path
 
 
 def main():
@@ -569,13 +569,13 @@ def main():
     print("Original:", human(original))
 
     # Initial extraction and processing
-    tmp = None
+    extract_dir = None
     keep_files = None
     
     # First attempt with initial quality
-    tmp, final, keep_files, out_path = process_epub(
+    extract_dir, final, keep_files, out_path = process_epub(
         args.epub, 
-        tmp_dir=tmp,
+        extract_dir=extract_dir,
         quality=args.quality, 
         out_path=args.output,  # Use user specified output if provided, otherwise None
         ignore_patterns=args.ignore, 
@@ -597,12 +597,12 @@ def main():
             print(f"Retrying with lossy quality={q}")
             
             # Clean up previous temporary directory
-            shutil.rmtree(tmp)
+            shutil.rmtree(extract_dir)
             
             # Process the EPUB with new quality setting, reusing the keep_files list
-            tmp, final, _, out_path = process_epub(
+            extract_dir, final, _, out_path = process_epub(
                 args.epub, 
-                tmp_dir=None,  # Start fresh to avoid quality degradation
+                extract_dir=None,  # Start fresh to avoid quality degradation
                 quality=q, 
                 out_path=args.output,  # Use user specified output if provided, otherwise None
                 ignore_patterns=args.ignore, 
@@ -613,7 +613,7 @@ def main():
     
     print(f"Final:   {human(final)}  (saved {(original - final) / original:.1%})")
     print(f"Output file: {out_path}")
-    shutil.rmtree(tmp)
+    shutil.rmtree(extract_dir)
 
 
 if __name__ == "__main__":
