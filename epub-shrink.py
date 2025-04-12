@@ -82,16 +82,7 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
     spine_refs = {item.attrib["idref"] for item in tree.findall(".//opf:itemref", ns)}
     keep_hrefs = {i.attrib["href"] for i in manifest.values()
                   if i.attrib["id"] in spine_refs}
-    
-    # Essential file types that should never be removed
-    essential_patterns = [
-        "*toc.ncx",                      # Navigation Control file for XML
-        "Text/nav.xhtml",                # Common navigation file
-        "*[Cc]ontents*",                 # Table of contents
-        "*logo*",                        # Logo images
-        "META-INF/*",                    # Package metadata
-    ]
-    
+
     # Build a list of files to keep
     files_to_keep = set(keep_hrefs)  # Start with all files from the spine
     
@@ -135,6 +126,15 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
                 if verbose:
                     print(f"Preserving cover image from properties: {cover_href}")
     
+
+    # Essential file types that should never be removed
+    essential_patterns = [
+        "*toc.ncx",                      # Navigation Control file for XML
+        "Text/nav.xhtml",                # Common navigation file
+        "*[Cc]ontents*",                 # Table of contents
+        "*logo*",                        # Logo images
+        "META-INF/*",                    # Package metadata
+    ]
     # First pass - identify essential files
     for href, node in list(manifest.items()):
         if any(fnmatch(href, pat) for pat in essential_patterns):
