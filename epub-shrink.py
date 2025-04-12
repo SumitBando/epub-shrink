@@ -27,7 +27,9 @@ from fnmatch import fnmatch
 from PIL import Image
 
 DEFAULT_IGNORE = [
-    "Generic Cross Sales.xhtml",
+    "generic-cross-sale",
+    "promo.css",
+    "xpromo",
     "*.DS_Store",
     "*.epubcheck*",  # EPUBCheck files
 ]
@@ -85,10 +87,6 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
     essential_patterns = [
         "*toc.ncx",                      # Navigation Control file for XML
         "Text/nav.xhtml",                # Common navigation file
-        # "*nav.*",                        # Navigation Document (EPUB3)
-        # "*.css",                       # All stylesheets
-        # "Styles/*stylesheet*.css",     # Common stylesheet paths
-        # "*[Cc]over*",                  # Cover images/files (now handled via metadata)
         "*[Cc]ontents*",                 # Table of contents
         "*logo*",                        # Logo images
         "META-INF/*",                    # Package metadata
@@ -97,7 +95,6 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
     # Build a list of files to keep
     files_to_keep = set(keep_hrefs)  # Start with all files from the spine
     
-    # Find cover image from metadata
     # First check meta tags with name="cover"
     cover_id = None
     for meta in tree.findall(".//opf:meta[@name='cover']", ns):
@@ -395,12 +392,10 @@ def compress_images(root, quality, verbose=False):
         if verbose:
             print("Processing PNG files by directory using oxipng...")
         
-        # Group PNG files by directory
         png_dirs = defaultdict(list)
         for png_path in png_paths:
             png_dirs[png_path.parent].append(png_path)
         
-        # Process each directory of PNGs at once
         for directory, files in png_dirs.items():
             if verbose:
                 print(f"Optimizing {len(files)} PNG files in {directory.relative_to(root)}")
@@ -408,17 +403,14 @@ def compress_images(root, quality, verbose=False):
             # Record sizes before compression
             before_sizes = {f: f.stat().st_size for f in files}
             
-            # Run oxipng on all PNG files in the directory at once
             oxipng_args = ["oxipng", "-o", "4", "--strip", "safe"]
             if not verbose:
                 oxipng_args.append("-q")
             
-            # Add all PNG files in this directory to the command
             oxipng_args.extend([str(f) for f in files])
-            
+            # print(oxipng_args)
             subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
             
-            # Record sizes after compression
             for f in files:
                 before = before_sizes[f]
                 after = f.stat().st_size
@@ -433,30 +425,25 @@ def compress_images(root, quality, verbose=False):
         if verbose:
             print("Processing JPEG files by directory using jpegoptim...")
         
-        # Group JPEG files by directory
         jpg_dirs = defaultdict(list)
         for jpg_path in jpg_paths:
             jpg_dirs[jpg_path.parent].append(jpg_path)
         
-        # Process each directory of JPEGs at once
         for directory, files in jpg_dirs.items():
             if verbose:
                 print(f"Optimizing {len(files)} JPEG files in {directory.relative_to(root)}")
             
-            # Record sizes before compression
             before_sizes = {f: f.stat().st_size for f in files}
             
-            # Run jpegoptim on all JPEG files in the directory at once
             jpegoptim_args = ["jpegoptim", "--strip-all"]
             if not verbose:
                 jpegoptim_args.append("-q")
             
-            # Add all JPEG files in this directory to the command
+            # print(jpegoptim_args)
             jpegoptim_args.extend([str(f) for f in files])
             
             subprocess.run(jpegoptim_args, stdout=subprocess.DEVNULL)
             
-            # Record sizes after compression
             for f in files:
                 before = before_sizes[f]
                 after = f.stat().st_size
@@ -466,25 +453,19 @@ def compress_images(root, quality, verbose=False):
                     print(f"{relative_path}: {human(before)} → {human(after)} ({reduction_pct:.1f}% reduction)")
                 savings.append((before, after))
     
-    # Process remaining image types individually
     img_paths = webp_paths
     if quality < 100:
-        # Also process files individually if we're using a lossy quality setting
         img_paths += png_paths + jpg_paths
     else:
-        # In lossless mode, process only files that weren't batch processed
         img_paths += [p for p in webp_paths]
         
-        # Add PNGs that weren't batch processed (if oxipng isn't available)
         if not shutil.which("oxipng"):
             img_paths += png_paths
             
-        # Add JPEGs that weren't batch processed (if jpegoptim isn't available)
         if not shutil.which("jpegoptim"):
             img_paths += jpg_paths
     
     for p in img_paths:
-        # Skip files we've already processed in batch
         if ((p in png_paths and shutil.which("oxipng") and quality == 100) or 
             (p in jpg_paths and shutil.which("jpegoptim") and quality == 100)):
             continue
@@ -506,34 +487,123 @@ def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
                 z.write(file, file.relative_to(root))
 
 
+def process_epub(epub_path, tmp_dir, quality, out_path, ignore_patterns, verbose=False, keep_files=None):
+    """Process an EPUB file with the given quality setting.
+    
+    Args:
+        epub_path: Path to the original EPUB file
+        tmp_dir: Directory to extract to (or None to create a new one)
+        quality: Image quality (0-100)
+        out_path: Output path for the compressed EPUB
+        ignore_patterns: List of patterns to ignore
+        verbose: Whether to print verbose output
+        keep_files: Optional pre-computed list of files to keep (skip reference analysis if provided)
+        
+    Returns:
+        Tuple of (tmp_dir, final_size, keep_files)
+    """
+    # Extract the EPUB if tmp_dir is not provided
+    if tmp_dir is None:
+        tmp_dir = explode(epub_path)
+    
+    # Load and process OPF file
+    opf_path, tree, manifest, ns = load_opf(tmp_dir)
+    
+    # If we don't have pre-computed keep_files, perform reference analysis
+    if keep_files is None:
+        if verbose:
+            print("Performing reference analysis...")
+        # Apply cleanup steps to determine which files to keep
+        remove_unreferenced(manifest, tree, ns, tmp_dir, verbose)
+        delete_ignored(DEFAULT_IGNORE + (ignore_patterns or []),
+                      tmp_dir, tree, manifest, verbose)
+        remove_unreferenced_fonts(tmp_dir, manifest, verbose)
+        
+        # Store the list of files that survived reference analysis
+        keep_files = set(manifest.keys())
+        if verbose:
+            print(f"Found {len(keep_files)} files to preserve after reference analysis.")
+    else:
+        # Use the pre-computed list to skip reference analysis
+        if verbose:
+            print(f"Using pre-computed list of {len(keep_files)} files to preserve.")
+        
+        # Remove files not in the keep_files list
+        to_remove = []
+        for href, node in list(manifest.items()):
+            if href not in keep_files:
+                to_remove.append(href)
+                file_path = tmp_dir / href
+                if file_path.exists():
+                    file_path.unlink()
+                parent = node.getparent() if hasattr(node, 'getparent') else tree.getroot()
+                if node in parent:
+                    parent.remove(node)
+        
+        if verbose and to_remove:
+            print(f"Removed {len(to_remove)} files not in the keep list.")
+    
+    # Save the cleaned tree to opf file
+    tree.write(opf_path, encoding="utf-8", xml_declaration=True)
+    
+    # Compress images with the specified quality
+    compress_images(tmp_dir, quality, verbose)
+    
+    # Rebuild the EPUB
+    rebuild_epub(tmp_dir, out_path)
+    final_size = out_path.stat().st_size
+    
+    return tmp_dir, final_size, keep_files
+
+
 def main():
     args = parse_args()
     out = args.output or args.epub.with_stem(args.epub.stem + "-min")
     original = args.epub.stat().st_size
     print("Original:", human(original))
 
-    tmp = explode(args.epub)
-    opf_path, tree, manifest, ns = load_opf(tmp)
-
-    remove_unreferenced(manifest, tree, ns, tmp, args.verbose)
-    delete_ignored(DEFAULT_IGNORE + (args.ignore or []),
-                   tmp, tree, manifest, args.verbose)
-    remove_unreferenced_fonts(tmp, manifest, args.verbose)
-
-    tree.write(opf_path, encoding="utf-8", xml_declaration=True)
-
-    compress_images(tmp, args.quality, args.verbose)
-    rebuild_epub(tmp, out)
-    final = out.stat().st_size
-
+    # Initial extraction and processing
+    tmp = None
+    keep_files = None
+    
+    # First attempt with initial quality
+    tmp, final, keep_files = process_epub(
+        args.epub, 
+        tmp_dir=tmp,
+        quality=args.quality, 
+        out_path=out, 
+        ignore_patterns=args.ignore, 
+        verbose=args.verbose,
+        keep_files=keep_files
+    )
+    
+    # Store initial quality
     q = args.quality
-    while args.targetsize and final / 1024 > args.targetsize and q > 25:
-        q = max(q - 5, 25)
-        # if args.verbose:
-        print(f"Target {args.targetsize} not met, current size {final}, retrying lossy quality={q}")
-        compress_images(tmp, q, args.verbose)
-        rebuild_epub(tmp, out)
-        final = out.stat().st_size
+
+    # Check if target size is specified and not met
+    if args.targetsize and final / 1024 > args.targetsize and q > 25:
+        print(f"Target {args.targetsize}KB not met, current size {human(final)}")
+        
+        # Try progressively lower qualities until target is met or quality floor is reached
+        while args.targetsize and final / 1024 > args.targetsize and q > 25:
+            # Calculate new quality level
+            q = max(q - 5, 25)
+            print(f"Retrying with lossy quality={q}")
+            
+            # Clean up previous temporary directory
+            shutil.rmtree(tmp)
+            
+            # Process the EPUB with new quality setting, reusing the keep_files list
+            tmp, final, _ = process_epub(
+                args.epub, 
+                tmp_dir=None,  # Start fresh to avoid quality degradation
+                quality=q, 
+                out_path=out, 
+                ignore_patterns=args.ignore, 
+                verbose=args.verbose,
+                keep_files=keep_files  # Reuse the computed list of files to keep
+            )
+            print(f"Quality {q}: {human(final)}")
 
     print(f"Final:   {human(final)}  (saved {(original - final) / original:.1%})")
     shutil.rmtree(tmp)
