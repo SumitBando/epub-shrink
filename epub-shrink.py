@@ -37,6 +37,17 @@ DEFAULT_IGNORE = [
 TMP_ROOT = pathlib.Path(tempfile.gettempdir())
 
 
+def check_compressors():
+    """Check if required image compressors are available."""
+    if not shutil.which("jpegoptim"):
+        print("Please install missing jpeg compressor jpegoptim for JPEG optimization")
+        sys.exit(1)
+    
+    if not shutil.which("oxipng"):
+        print("Please install missing PNG compressor oxipng for PNG optimization")
+        sys.exit(1)
+
+
 def human(n: int) -> str:
     for unit in ('B', 'KB', 'MB', 'GB'):
         if n < 1024 or unit == 'GB':
@@ -361,11 +372,11 @@ def compress_image(path: pathlib.Path, quality: int, verbose=False):
         img = Image.open(path)
         fmt = img.format
         if quality == 100:
-            if fmt == "JPEG" and shutil.which("jpegoptim"):
+            if fmt == "JPEG":
                 cmd = ["jpegoptim", "--strip-all", str(path)]
                 print(f"Running: {' '.join(cmd)}")
                 subprocess.run(cmd, stdout=subprocess.DEVNULL)
-            elif fmt == "PNG" and shutil.which("oxipng"):
+            elif fmt == "PNG":
                 oxipng_args = ["oxipng", "-o", "4", "--strip", "safe"]
                 # if not verbose:
                 # oxipng_args.append("-q")
@@ -396,9 +407,9 @@ def compress_images(root, quality, verbose=False):
     savings = []
     
     # Process PNG files by directory to optimize oxipng performance
-    if png_paths and shutil.which("oxipng") and quality == 100:
+    if png_paths and quality == 100:
         if verbose:
-            print("Processing PNG files by directory using oxipng...")
+            print(f"Processing PNG files by directory using oxipng with quality: {quality}...")
         
         png_dirs = defaultdict(list)
         for png_path in png_paths:
@@ -429,9 +440,9 @@ def compress_images(root, quality, verbose=False):
                 savings.append((before, after))
     
     # Process JPEG files by directory to optimize jpegoptim performance
-    if jpg_paths and shutil.which("jpegoptim") and quality == 100:
+    if jpg_paths and quality == 100:
         if verbose:
-            print("Processing JPEG files by directory using jpegoptim...")
+            print(f"Processing JPEG files by directory using jpegoptim with quality: {quality}  ...")
         
         jpg_dirs = defaultdict(list)
         for jpg_path in jpg_paths:
@@ -461,21 +472,11 @@ def compress_images(root, quality, verbose=False):
                     print(f"{relative_path}: {human(before)} → {human(after)} ({reduction_pct:.1f}% reduction)")
                 savings.append((before, after))
     
-    img_paths = webp_paths
-    if quality < 100:
-        img_paths += png_paths + jpg_paths
-    else:
-        img_paths += [p for p in webp_paths]
-        
-        if not shutil.which("oxipng"):
-            img_paths += png_paths
-            
-        if not shutil.which("jpegoptim"):
-            img_paths += jpg_paths
+    img_paths = webp_paths + png_paths + jpg_paths
     
     for p in img_paths:
-        if ((p in png_paths and shutil.which("oxipng") and quality == 100) or 
-            (p in jpg_paths and shutil.which("jpegoptim") and quality == 100)):
+        if ((p in png_paths and quality == 100) or 
+            (p in jpg_paths and quality == 100)):
             continue
             
         b, a = compress_image(p, quality, verbose)
@@ -573,6 +574,7 @@ def process_epub(epub_path, extract_dir, quality, out_path, ignore_patterns, ver
 
 def main():
     args = parse_args()
+    check_compressors()
     original = args.epub.stat().st_size
     print("Original:", human(original))
 
