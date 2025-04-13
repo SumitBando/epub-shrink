@@ -291,7 +291,7 @@ def delete_ignored(patterns, root, tree, manifest, verbose=False):
             (root / href).unlink(missing_ok=True)
             manifest[href].getparent().remove(manifest[href]) if hasattr(manifest[href], 'getparent') else tree.getroot().remove(manifest[href])
     if verbose and removed:
-        print("Ignored‑pattern files:", *removed, sep="\n  ")
+        print("Ignored-pattern files:", *removed, sep="\n  ")
     return removed
 
 
@@ -374,14 +374,14 @@ def compress_image(path: pathlib.Path, quality: int, verbose=False):
         if quality == 100:
             if fmt == "JPEG":
                 cmd = ["jpegoptim", "--strip-all", str(path)]
-                print(f"Running: {' '.join(cmd)}")
+                # print(f"Running jpegoptim: {' '.join(cmd)}")
                 subprocess.run(cmd, stdout=subprocess.DEVNULL)
             elif fmt == "PNG":
                 oxipng_args = ["oxipng", "-o", "4", "--strip", "safe"]
                 # if not verbose:
                 # oxipng_args.append("-q")
                 oxipng_args.append(str(path))
-                print(f"Running: {' '.join(oxipng_args)}")
+                # print(f"Running oxipng: {' '.join(oxipng_args)}")
                 subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
             else:
                 img.save(path, format=fmt, optimize=True)
