@@ -27,11 +27,13 @@ from fnmatch import fnmatch
 from PIL import Image
 
 DEFAULT_IGNORE = [
-    "generic-cross-sale",
-    "promo.css",
-    "xpromo",
     "*.DS_Store",
-    "*.epubcheck*",  # EPUBCheck files
+    "*.epubcheck*",
+    "generic-cross-sale",
+    "xpromo",
+    "promo.css",
+    "next-reads",
+    "newsletter",
 ]
 
 TMP_ROOT = pathlib.Path(tempfile.gettempdir())
@@ -137,8 +139,8 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
 
     # Essential file types that should never be removed
     essential_patterns = [
-        "*toc.ncx",                      # Navigation Control file for XML
-        "Text/nav.xhtml",                # Common navigation file
+        "*.ncx",                      # Navigation Control file for XML
+        "nav.xhtml",                   # Common navigation file
         "*[Cc]ontents*",                 # Table of contents
         "*logo*",                        # Logo images
         "META-INF/*",                    # Package metadata
@@ -688,11 +690,15 @@ def process_epub(epub_path, extract_dir, quality, out_path, ignore_patterns, ver
     # If we don't have pre-computed keep_files, perform reference analysis
     if keep_files is None:
         if verbose:
-            print("Performing reference analysis...")
-        # Apply cleanup steps to determine which files to keep
-        remove_unreferenced(manifest, tree, ns, extract_dir, verbose)
+            print("Deleting ignored files...")
         delete_ignored(DEFAULT_IGNORE + (ignore_patterns or []),
                       extract_dir, tree, manifest, verbose)
+        
+        if verbose:
+            print("Performing reference analysis...")
+        remove_unreferenced(manifest, tree, ns, extract_dir, verbose)
+        
+        # Finally clean up unreferenced fonts
         remove_unreferenced_fonts(extract_dir, manifest, verbose)
         
         # Store the list of files that survived reference analysis
