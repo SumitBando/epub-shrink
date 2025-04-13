@@ -95,8 +95,6 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
     spine_refs = {item.attrib["idref"] for item in tree.findall(".//opf:itemref", ns)}
     keep_hrefs = {i.attrib["href"] for i in manifest.values()
                   if i.attrib["id"] in spine_refs}
-
-    # Build a list of files to keep
     files_to_keep = set(keep_hrefs)  # Start with all files from the spine
     
     # Check for guide entries in the OPF file and add them to files_to_keep
@@ -212,12 +210,18 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
     # Process all CSS files to find font references
     css_files = []
     
-    # First collect all CSS files - both from manifest and referenced in HTML
-    for href in manifest:
+    # Only collect CSS files that are referenced in HTML
+    for href in list(manifest.keys()):
         if href.lower().endswith('.css'):
-            css_path = root / href
-            if css_path.exists():
-                css_files.append(css_path)
+            # Only include CSS files that are referenced in HTML
+            if href in referenced_files or os.path.basename(href) in referenced_files:
+                css_path = root / href
+                if css_path.exists():
+                    css_files.append(css_path)
+                    if verbose:
+                        print(f"Keeping referenced CSS file: {href}")
+            elif verbose:
+                print(f"Dropping unreferenced CSS file: {href}")
     
     # Find font files referenced in CSS
     font_urls = set()
@@ -264,13 +268,6 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
                 files_to_keep.add(href)
                 if verbose:
                     print(f"Found font reference: {href}")
-                    
-        # Special handling for CSS files - always preserve stylesheets
-        if href.lower().endswith('.css'):
-            if "stylesheet" in href.lower() or "style" in href.lower():
-                files_to_keep.add(href)
-                if verbose:
-                    print(f"Preserving stylesheet: {href}")
     
     # Now remove files that are not in files_to_keep
     for href, node in list(manifest.items()):
