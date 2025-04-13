@@ -26,16 +26,6 @@ from xml.etree import ElementTree as ET
 from fnmatch import fnmatch
 from PIL import Image
 
-DEFAULT_IGNORE = [
-    "*.DS_Store",
-    "*.epubcheck*",
-    "generic-cross-sale",
-    "xpromo",
-    "promo.css",
-    "next-reads",
-    "newsletter",
-]
-
 TMP_ROOT = pathlib.Path(tempfile.gettempdir())
 
 
@@ -282,10 +272,20 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
                 parent.remove(node)
 
 
-def delete_ignored(patterns, root, tree, manifest, verbose=False):
+def delete_ignored(ignore_patterns, root, tree, manifest, verbose=False):
+    DEFAULT_IGNORE = [
+        "*.DS_Store",
+        "*.epubcheck*",
+        "generic-cross-sale",
+        "xpromo",
+        "promo.css",
+        "next-reads",
+        "newsletter",
+    ]
+    all_patterns = DEFAULT_IGNORE + (ignore_patterns or [])
     removed = []
     for href in list(manifest.keys()):
-        if any(fnmatch(href, pat) for pat in patterns):
+        if any(fnmatch(href, pat) for pat in all_patterns):
             removed.append(href)
             (root / href).unlink(missing_ok=True)
             manifest[href].getparent().remove(manifest[href]) if hasattr(manifest[href], 'getparent') else tree.getroot().remove(manifest[href])
@@ -688,7 +688,7 @@ def process_epub(epub_path, extract_dir, quality, out_path, ignore_patterns, ver
     if keep_files is None:
         if verbose:
             print("Deleting ignored files...")
-        delete_ignored(DEFAULT_IGNORE + (ignore_patterns or []),
+        delete_ignored(ignore_patterns,
                       extract_dir, tree, manifest, verbose)
         
         if verbose:
