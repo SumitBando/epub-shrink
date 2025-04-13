@@ -404,12 +404,15 @@ def compress_images(root, quality, verbose=False):
     png_paths = list(root.rglob("*.png"))
     webp_paths = list(root.rglob("*.webp"))
     
+    # Print summary of found images
+    print(f"Found {len(jpg_paths)} JPEG files, {len(png_paths)} PNG files, and {len(webp_paths)} WebP files")
+    
     savings = []
     
     # Process PNG files by directory to optimize oxipng performance
     if png_paths and quality == 100:
         if verbose:
-            print(f"Processing PNG files by directory using oxipng with quality: {quality}...")
+            print(f"\nProcessing PNG files by directory using oxipng with quality: {quality}...")
         
         png_dirs = defaultdict(list)
         for png_path in png_paths:
@@ -417,10 +420,29 @@ def compress_images(root, quality, verbose=False):
         
         for directory, files in png_dirs.items():
             if verbose:
-                print(f"Optimizing {len(files)} PNG files in {directory.relative_to(root)}")
+                print(f"\nOptimizing {len(files)} PNG files in {directory.relative_to(root)}")
             
             # Record sizes before compression
             before_sizes = {f: f.stat().st_size for f in files}
+            
+            # In verbose mode, analyze each PNG image before compression
+            if verbose:
+                for f in files:
+                    image_info = analyze_image_quality(f, verbose)
+                    if "error" not in image_info:
+                        rel_path = str(f.relative_to(root))
+                        dimensions = f"{image_info['dimensions'][0]}x{image_info['dimensions'][1]}"
+                        size = human(image_info['file_size'])
+                        color_type = "Unknown"
+                        if image_info['png_info'] and 'color_type' in image_info['png_info']:
+                            color_type = image_info['png_info']['color_type']
+                        mode = image_info['mode']
+                        print(f"\nPNG Analysis: {rel_path}")
+                        print(f"  Dimensions: {dimensions}")
+                        print(f"  Size: {size}")
+                        print(f"  Color Type: {color_type}")
+                        print(f"  Mode: {mode}")
+                        print("  About to compress...")
             
             oxipng_args = ["oxipng", "-o", "4", "--strip", "safe"]
             if not verbose:
@@ -436,13 +458,13 @@ def compress_images(root, quality, verbose=False):
                 if verbose:
                     relative_path = f.relative_to(root)
                     reduction_pct = (before - after) / before * 100 if before > 0 else 0
-                    print(f"{relative_path}: {human(before)} → {human(after)} ({reduction_pct:.1f}% reduction)")
+                    print(f"  {relative_path}: {human(before)} → {human(after)} ({reduction_pct:.1f}% reduction)")
                 savings.append((before, after))
     
     # Process JPEG files by directory to optimize jpegoptim performance
     if jpg_paths and quality == 100:
         if verbose:
-            print(f"Processing JPEG files by directory using jpegoptim with quality: {quality}  ...")
+            print(f"\nProcessing JPEG files by directory using jpegoptim with quality: {quality}...")
         
         jpg_dirs = defaultdict(list)
         for jpg_path in jpg_paths:
@@ -450,15 +472,31 @@ def compress_images(root, quality, verbose=False):
         
         for directory, files in jpg_dirs.items():
             if verbose:
-                print(f"Optimizing {len(files)} JPEG files in {directory.relative_to(root)}")
+                print(f"\nOptimizing {len(files)} JPEG files in {directory.relative_to(root)}")
             
             before_sizes = {f: f.stat().st_size for f in files}
+            
+            # In verbose mode, analyze each JPEG image before compression
+            if verbose:
+                for f in files:
+                    image_info = analyze_image_quality(f, verbose)
+                    if "error" not in image_info:
+                        rel_path = str(f.relative_to(root))
+                        dimensions = f"{image_info['dimensions'][0]}x{image_info['dimensions'][1]}"
+                        size = human(image_info['file_size'])
+                        est_quality = f"{image_info['estimated_quality'] or 'Unknown'}"
+                        mode = image_info['mode']
+                        print(f"\nJPEG Analysis: {rel_path}")
+                        print(f"  Dimensions: {dimensions}")
+                        print(f"  Size: {size}")
+                        print(f"  Estimated Quality: {est_quality}")
+                        print(f"  Mode: {mode}")
+                        print("  About to compress...")
             
             jpegoptim_args = ["jpegoptim", "--strip-all"]
             if not verbose:
                 jpegoptim_args.append("-q")
             
-            # print(jpegoptim_args)
             jpegoptim_args.extend([str(f) for f in files])
             print(jpegoptim_args)
             subprocess.run(jpegoptim_args, stdout=subprocess.DEVNULL)
@@ -469,24 +507,150 @@ def compress_images(root, quality, verbose=False):
                 if verbose:
                     relative_path = f.relative_to(root)
                     reduction_pct = (before - after) / before * 100 if before > 0 else 0
-                    print(f"{relative_path}: {human(before)} → {human(after)} ({reduction_pct:.1f}% reduction)")
+                    print(f"  {relative_path}: {human(before)} → {human(after)} ({reduction_pct:.1f}% reduction)")
                 savings.append((before, after))
     
-    img_paths = webp_paths + png_paths + jpg_paths
+    # Handle WebP files and other quality settings for JPEG/PNG
+    img_paths = webp_paths + [p for p in png_paths if quality != 100] + [p for p in jpg_paths if quality != 100]
     
     for p in img_paths:
-        if ((p in png_paths and quality == 100) or 
-            (p in jpg_paths and quality == 100)):
-            continue
-            
+        # For verbose mode, analyze the image before compression
+        if verbose:
+            image_info = analyze_image_quality(p, verbose)
+            if "error" not in image_info:
+                rel_path = str(p.relative_to(root))
+                fmt = image_info['format']
+                dimensions = f"{image_info['dimensions'][0]}x{image_info['dimensions'][1]}"
+                size = human(image_info['file_size'])
+                mode = image_info['mode']
+                
+                print(f"\n{fmt} Analysis: {rel_path}")
+                print(f"  Dimensions: {dimensions}")
+                print(f"  Size: {size}")
+                
+                if fmt == "JPEG":
+                    est_quality = f"{image_info['estimated_quality'] or 'Unknown'}"
+                    print(f"  Estimated Quality: {est_quality}")
+                elif fmt == "PNG" and image_info['png_info']:
+                    color_type = image_info['png_info'].get('color_type', 'Unknown')
+                    print(f"  Color Type: {color_type}")
+                
+                print(f"  Mode: {mode}")
+                print(f"  About to compress with quality {quality}...")
+        
+        # Compress the image
         b, a = compress_image(p, quality, verbose)
         if verbose:
             relative_path = p.relative_to(root)
             reduction_pct = (b - a) / b * 100 if b > 0 else 0
-            print(f"{relative_path}: {human(b)} → {human(a)} ({reduction_pct:.1f}% reduction)")
+            print(f"  {relative_path}: {human(b)} → {human(a)} ({reduction_pct:.1f}% reduction)")
         savings.append((b, a))
     
     return savings
+
+
+def analyze_image_quality(path: pathlib.Path, verbose=False):
+    """Analyze the quality of an image file.
+    
+    Args:
+        path: Path to the image file
+        verbose: Whether to print verbose output
+        
+    Returns:
+        A tuple of (image format, estimated quality, color mode, dimensions)
+    """
+    try:
+        img = Image.open(path)
+        fmt = img.format
+        mode = img.mode
+        dimensions = img.size
+        
+        estimated_quality = None
+        
+        # For JPEG, try to estimate quality
+        if fmt == "JPEG":
+            # Method to estimate JPEG quality based on quantization tables
+            try:
+                # Check if we can access quantization tables
+                if hasattr(img, 'quantization'):
+                    qtables = img.quantization
+                    if qtables:
+                        # Simple algorithm for quality estimation
+                        # Higher values in qtables = lower quality
+                        if len(qtables) > 0:
+                            # Sample the first quantization table
+                            sample = list(qtables.values())[0]
+                            if isinstance(sample, list) and len(sample) > 0:
+                                # Estimate quality inversely proportional to quantization values
+                                # This is a rough approximation
+                                avg_qtable = sum(sample) / len(sample)
+                                if avg_qtable < 1:
+                                    estimated_quality = 100
+                                else:
+                                    # Rough formula, inversely proportional to average quantization value
+                                    estimated_quality = min(100, max(1, int(100 - (avg_qtable / 2.5))))
+            except Exception as e:
+                if verbose:
+                    print(f"Error estimating JPEG quality: {e}")
+                    
+        # For PNG, check color type and bit depth
+        png_info = None
+        if fmt == "PNG":
+            color_type = "unknown"
+            bit_depth = "unknown"
+            try:
+                # Try to get more detailed PNG info
+                if hasattr(img, 'text') and 'Software' in img.text:
+                    software = img.text['Software']
+                else:
+                    software = "unknown"
+                    
+                if mode == "P":
+                    color_type = "palette"
+                    if hasattr(img, 'palette'):
+                        palette_size = len(img.palette.palette) // 3
+                        color_type = f"palette ({palette_size} colors)"
+                elif mode == "L":
+                    color_type = "grayscale"
+                elif mode == "LA":
+                    color_type = "grayscale+alpha"
+                elif mode == "RGB":
+                    color_type = "RGB"
+                elif mode == "RGBA":
+                    color_type = "RGB+alpha"
+                    
+                # Get bit depth if available
+                if hasattr(img, 'bits'):
+                    bit_depth = img.bits
+                
+                png_info = {
+                    "color_type": color_type,
+                    "bit_depth": bit_depth,
+                    "software": software
+                }
+            except Exception as e:
+                if verbose:
+                    print(f"Error getting PNG info: {e}")
+                
+        # Calculate file size
+        file_size = path.stat().st_size
+                
+        return {
+            "format": fmt,
+            "mode": mode,
+            "dimensions": dimensions,
+            "file_size": file_size,
+            "estimated_quality": estimated_quality,
+            "png_info": png_info if fmt == "PNG" else None
+        }
+        
+    except Exception as e:
+        if verbose:
+            print(f"Error analyzing image {path}: {e}")
+        return {
+            "format": "unknown",
+            "error": str(e)
+        }
 
 
 def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
