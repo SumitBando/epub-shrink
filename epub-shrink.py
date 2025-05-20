@@ -267,9 +267,12 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
             file_path = root / href
             if file_path.exists():
                 file_path.unlink()
-            parent = node.getparent() if hasattr(node, 'getparent') else tree.getroot()
-            if node in parent:
-                parent.remove(node)
+            # Use standard library approach for removing nodes
+            parent = tree.getroot()
+            for child in list(parent):
+                if child == node:
+                    parent.remove(child)
+                    break
 
 
 def delete_ignored(ignore_patterns, root, tree, manifest, verbose=False):
@@ -288,16 +291,13 @@ def delete_ignored(ignore_patterns, root, tree, manifest, verbose=False):
         if any(fnmatch(href, pat) for pat in all_patterns):
             removed.append(href)
             (root / href).unlink(missing_ok=True)
-            # Remove from manifest - handle both lxml (with getparent) and xml.etree (without getparent)
+            # Remove from manifest using standard library approach
             try:
-                if hasattr(manifest[href], 'getparent'):
-                    manifest[href].getparent().remove(manifest[href])
-                else:
-                    parent = tree.getroot()
-                    for child in list(parent):
-                        if child == manifest[href]:
-                            parent.remove(child)
-                            break
+                parent = tree.getroot()
+                for child in list(parent):
+                    if child == manifest[href]:
+                        parent.remove(child)
+                        break
             except Exception as e:
                 print(f"Warning: Could not remove {href} from manifest: {e}")
     if verbose and removed:
@@ -726,9 +726,12 @@ def process_epub(epub_path, extract_dir, quality, out_path, ignore_patterns, ver
                 file_path = extract_dir / href
                 if file_path.exists():
                     file_path.unlink()
-                parent = node.getparent() if hasattr(node, 'getparent') else tree.getroot()
-                if node in parent:
-                    parent.remove(node)
+                # Use standard library approach for removing nodes
+                parent = tree.getroot()
+                for child in list(parent):
+                    if child == node:
+                        parent.remove(child)
+                        break
         
         if verbose and to_remove:
             print(f"Removed {len(to_remove)} files not in the keep list.")
