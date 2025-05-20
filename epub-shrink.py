@@ -276,7 +276,7 @@ def delete_ignored(ignore_patterns, root, tree, manifest, verbose=False):
     DEFAULT_IGNORE = [
         "*.DS_Store",
         "*.epubcheck*",
-        "generic-cross-sale",
+        "*cross-sale*",
         "xpromo",
         "promo.css",
         "next-reads",
@@ -288,7 +288,18 @@ def delete_ignored(ignore_patterns, root, tree, manifest, verbose=False):
         if any(fnmatch(href, pat) for pat in all_patterns):
             removed.append(href)
             (root / href).unlink(missing_ok=True)
-            manifest[href].getparent().remove(manifest[href]) if hasattr(manifest[href], 'getparent') else tree.getroot().remove(manifest[href])
+            # Remove from manifest - handle both lxml (with getparent) and xml.etree (without getparent)
+            try:
+                if hasattr(manifest[href], 'getparent'):
+                    manifest[href].getparent().remove(manifest[href])
+                else:
+                    parent = tree.getroot()
+                    for child in list(parent):
+                        if child == manifest[href]:
+                            parent.remove(child)
+                            break
+            except Exception as e:
+                print(f"Warning: Could not remove {href} from manifest: {e}")
     if verbose and removed:
         print("Ignored-pattern files:", *removed, sep="\n  ")
     return removed
