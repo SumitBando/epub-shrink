@@ -760,11 +760,11 @@ def main():
     q = args.quality
 
     # Check if target size is specified and not met
-    if args.targetsize and final / 1024 > args.targetsize and q > 25:
+    if args.targetsize and final / 1024 > args.targetsize and q > 15:
         print(f"Target {args.targetsize}KB not met, current size {human(final)}")
         
         # Try progressively lower qualities until target is met or quality floor is reached
-        while args.targetsize and final / 1024 > args.targetsize and q > 25:
+        while args.targetsize and final / 1024 > args.targetsize and q > 15:
             # Calculate new quality level
             q = max(q - 5, 25)
             print(f"Retrying with lossy quality={q}")
