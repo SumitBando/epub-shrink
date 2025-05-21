@@ -10,9 +10,8 @@ description = "Shrink EPUB files by removing unused assets and compressing image
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "lxml",
     "tinycss2",
-    "pillow-simd",
+    "pillow",
     "fonttools",
     "tqdm",
 ]
