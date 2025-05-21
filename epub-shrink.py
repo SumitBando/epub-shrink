@@ -8,7 +8,7 @@ Options:
     -o, --output FILE          Output file (default: INPUT stem + '-min.epub')
     -q, --quality N            Initial image quality (0‑100, default 100 = lossless)
     -t, --targetsize KB        Target size in KB (try lossy passes 95→25 until reached)
-    -i, --ignore PATTERN       Extra glob(s) to delete (can repeat)
+    -i, --purge PATTERN       Extra glob(s) to delete (can repeat)
     -v, --verbose              Print disposition of each processed file
 """
 
@@ -56,7 +56,7 @@ def parse_args():
                    help="Initial lossy quality (0‑100, default 100=lossless)")
     p.add_argument("-t", "--targetsize", type=int,
                    help="Target size in KB (after lossless step)")
-    p.add_argument("-i", "--ignore", action="append",
+    p.add_argument("-i", "--purge", action="append",
                    help="Extra glob pattern(s) to delete (can repeat)")
     p.add_argument("-v", "--verbose", action="store_true")
     
@@ -125,7 +125,7 @@ def load_opf(root: pathlib.Path):
     return opf_path, tree, manifest, ns
 
 
-def remove_unreferenced(manifest, tree, ns, root, verbose=False):
+def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=False):
     spine_refs = {item.attrib["idref"] for item in tree.findall(".//opf:itemref", ns)}
     keep_hrefs = {i.attrib["href"] for i in manifest.values()
                   if i.attrib["id"] in spine_refs}
@@ -319,37 +319,53 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
                     break
 
 
-def delete_ignored(ignore_patterns, root, tree, manifest, verbose=False):
+def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest, verbose=False):
     if verbose:
-        print("Deleting ignored files...")
-    DEFAULT_IGNORE = [
+        print("Purging unwanted files...")
+    DEFAULT_PURGES = [
         "*.DS_Store",
         "*.epubcheck*",
         "*cross-sale*",
         "*cross-sell*",
-        "xpromo",
+        "*xpromo*",
         "promo.css",
         "next-reads",
         "newsletter",
+        "com.apple.ibooks.display-options.xml",
     ]
-    all_patterns = DEFAULT_IGNORE + (ignore_patterns or [])
-    removed = []
+    all_patterns = DEFAULT_PURGES + (purge_patterns or [])
     for href in list(manifest.keys()):
         if any(fnmatch(href, pat) for pat in all_patterns):
-            removed.append(href)
-            (root / href).unlink(missing_ok=True)
-            # Remove from manifest using standard library approach
-            try:
-                parent = tree.getroot()
-                for child in list(parent):
-                    if child == manifest[href]:
-                        parent.remove(child)
-                        break
-            except Exception as e:
-                print(f"Warning: Could not remove {href} from manifest: {e}")
-    if verbose and removed:
-        print("Ignored-pattern files:", *removed, sep="\n  ")
-    return removed
+            remove_file(extract_dir, content_dir, href)
+            remove_from_manifest(tree, href)
+            print(f"Purged file: {href}")
+
+def remove_file(extract_dir,content_dir, href):
+    """Remove a file from the content directory."""
+    # Use content_dir if available, otherwise fall back to extract_dir
+    # if content_dir:
+    #     (content_dir / href).unlink(missing_ok=True)
+    # else:
+    #     (extract_dir / href).unlink(missing_ok=True)
+
+    try:
+        file_path = content_dir / href
+        if file_path.exists():
+            file_path.unlink()
+    except Exception as e:
+        print(f"Warning: Could not remove {href}: {e}")
+
+def remove_from_manifest(tree, href):
+    try:
+        parent = tree.getroot()
+        # from root, get manifest, then iterate through manifest items to find the one to remove
+        manifest = parent.find("{http://www.idpf.org/2007/opf}manifest")
+        for item in list(manifest):
+            if item.get("href") == href:
+                manifest.remove(item)
+                break
+    except Exception as e:
+        print(f"Warning: Could not remove {href} from manifest: {e}")
 
 
 def css_referenced_fonts(root):
@@ -381,7 +397,7 @@ def css_referenced_fonts(root):
     return font_refs
 
 
-def remove_unreferenced_fonts(root, manifest, verbose=False):
+def remove_unreferenced_fonts(root, manifest, content_dir=None, verbose=False):
     referenced = css_referenced_fonts(root)
     if verbose:
         print("Referenced fonts:", *[str(f.relative_to(root)) for f in referenced], sep="\n  ")
@@ -713,14 +729,14 @@ def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
                 z.write(file, file.relative_to(root))
 
 
-def process_epub(epub_path, quality, out_path, ignore_patterns, verbose=False, keep_files=None):
+def process_epub(epub_path, quality, out_path, purge_patterns, verbose=False, keep_files=None):
     """Process an EPUB file with the given quality setting.
     
     Args:
         epub_path: Path to the original EPUB file
         quality: Image quality (0-100)
         out_path: Output path for the compressed EPUB (if None, will be generated based on quality)
-        ignore_patterns: List of patterns to ignore
+        purge_patterns: List of patterns to purge
         verbose: Whether to print verbose output
         keep_files: Optional pre-computed list of files to keep (skip reference analysis if provided)
         
@@ -739,17 +755,20 @@ def process_epub(epub_path, quality, out_path, ignore_patterns, verbose=False, k
     # Load and process OPF file
     opf_path, tree, manifest, ns = load_opf(extract_dir)
     
+    # Compute content directory (directory containing the OPF file)
+    content_dir = opf_path.parent
+    
     # If we don't have pre-computed keep_files, perform reference analysis
     if keep_files is None:
-        delete_ignored(ignore_patterns,
-                      extract_dir, tree, manifest, verbose)
+        purge_unwanted_files(purge_patterns,
+                      extract_dir, content_dir, tree, manifest, verbose)
         
         if verbose:
             print("Performing reference analysis...")
-        remove_unreferenced(manifest, tree, ns, extract_dir, verbose)
+        remove_unreferenced(manifest, tree, ns, extract_dir, content_dir, verbose)
         
         # Finally clean up unreferenced fonts
-        remove_unreferenced_fonts(extract_dir, manifest, verbose)
+        remove_unreferenced_fonts(extract_dir, manifest, content_dir, verbose)
         
         # Store the list of files that survived reference analysis
         keep_files = set(manifest.keys())
@@ -805,7 +824,7 @@ def main():
         args.epub,
         quality=args.quality, 
         out_path=args.output,  # Use user specified output if provided, otherwise None
-        ignore_patterns=args.ignore, 
+        purge_patterns=args.purge, 
         verbose=args.verbose,
         keep_files=keep_files
     )
@@ -831,7 +850,7 @@ def main():
                 args.epub,
                 quality=q, 
                 out_path=args.output,  # Use user specified output if provided, otherwise None
-                ignore_patterns=args.ignore, 
+                purge_patterns=args.purge, 
                 verbose=args.verbose,
                 keep_files=keep_files  # Reuse the computed list of files to keep
             )
