@@ -276,10 +276,13 @@ def remove_unreferenced(manifest, tree, ns, root, verbose=False):
 
 
 def delete_ignored(ignore_patterns, root, tree, manifest, verbose=False):
+    if verbose:
+        print("Deleting ignored files...")
     DEFAULT_IGNORE = [
         "*.DS_Store",
         "*.epubcheck*",
         "*cross-sale*",
+        "*cross-sell*",
         "xpromo",
         "promo.css",
         "next-reads",
@@ -697,8 +700,6 @@ def process_epub(epub_path, extract_dir, quality, out_path, ignore_patterns, ver
     
     # If we don't have pre-computed keep_files, perform reference analysis
     if keep_files is None:
-        if verbose:
-            print("Deleting ignored files...")
         delete_ignored(ignore_patterns,
                       extract_dir, tree, manifest, verbose)
         
