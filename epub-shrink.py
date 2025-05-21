@@ -69,6 +69,7 @@ def parse_args():
 
 
 def explode(epub_path: pathlib.Path) -> pathlib.Path:
+    """Extract the EPUB to a new temporary directory."""
     extract_dir = TMP_ROOT / f"epub-shrink-{os.getpid()}"
     if extract_dir.exists():
         shutil.rmtree(extract_dir)
@@ -712,12 +713,11 @@ def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
                 z.write(file, file.relative_to(root))
 
 
-def process_epub(epub_path, extract_dir, quality, out_path, ignore_patterns, verbose=False, keep_files=None):
+def process_epub(epub_path, quality, out_path, ignore_patterns, verbose=False, keep_files=None):
     """Process an EPUB file with the given quality setting.
     
     Args:
         epub_path: Path to the original EPUB file
-        extract_dir: Directory to extract to (or None to create a new one)
         quality: Image quality (0-100)
         out_path: Output path for the compressed EPUB (if None, will be generated based on quality)
         ignore_patterns: List of patterns to ignore
@@ -727,9 +727,7 @@ def process_epub(epub_path, extract_dir, quality, out_path, ignore_patterns, ver
     Returns:
         Tuple of (extract_dir, final_size, keep_files, out_path)
     """
-    # Extract the EPUB if extract_dir is not provided
-    if extract_dir is None:
-        extract_dir = explode(epub_path)
+    extract_dir = explode(epub_path)
     
     # If out_path is not provided, generate based on quality
     if out_path is None:
@@ -799,14 +797,12 @@ def main():
     original = args.epub.stat().st_size
     print("Original:", human(original))
 
-    # Initial extraction and processing
-    extract_dir = None
+    # Initial processing
     keep_files = None
     
     # First attempt with initial quality
     extract_dir, final, keep_files, out_path = process_epub(
-        args.epub, 
-        extract_dir=extract_dir,
+        args.epub,
         quality=args.quality, 
         out_path=args.output,  # Use user specified output if provided, otherwise None
         ignore_patterns=args.ignore, 
@@ -832,8 +828,7 @@ def main():
             
             # Process the EPUB with new quality setting, reusing the keep_files list
             extract_dir, final, _, out_path = process_epub(
-                args.epub, 
-                extract_dir=None,  # Start fresh to avoid quality degradation
+                args.epub,
                 quality=q, 
                 out_path=args.output,  # Use user specified output if provided, otherwise None
                 ignore_patterns=args.ignore, 
