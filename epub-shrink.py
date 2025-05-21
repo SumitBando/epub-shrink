@@ -49,7 +49,7 @@ def human(n: int) -> str:
 
 def parse_args():
     p = argparse.ArgumentParser(description="Lossless (and optionally lossy) EPUB optimiser")
-    p.add_argument("epub", type=pathlib.Path, help="Input .epub file")
+    p.add_argument("epub", type=pathlib.Path, help="Input .epub file", nargs="?")
     p.add_argument("-o", "--output", type=pathlib.Path,
                    help="Output file (default: input stem + '-min.epub')")
     p.add_argument("-q", "--quality", type=int, default=100,
@@ -59,7 +59,13 @@ def parse_args():
     p.add_argument("-i", "--ignore", action="append",
                    help="Extra glob pattern(s) to delete (can repeat)")
     p.add_argument("-v", "--verbose", action="store_true")
-    return p.parse_args()
+    
+    args = p.parse_args()
+    if args.epub is None:
+        p.print_help()
+        sys.exit(1)
+    
+    return args
 
 
 def explode(epub_path: pathlib.Path) -> pathlib.Path:
@@ -67,17 +73,54 @@ def explode(epub_path: pathlib.Path) -> pathlib.Path:
     if extract_dir.exists():
         shutil.rmtree(extract_dir)
     extract_dir.mkdir()
-    with zipfile.ZipFile(epub_path) as z:
-        z.extractall(extract_dir)
+    zipfile.ZipFile(epub_path).extractall(extract_dir)
     return extract_dir
 
 
 def load_opf(root: pathlib.Path):
-    opf_path = next(root.rglob("*.opf"))
+    """Find and load the OPF file using container.xml or fallback to direct search.
+    
+    According to the EPUB spec, META-INF/container.xml points to the OPF file.
+    If container.xml isn't found or doesn't contain a valid reference,
+    fall back to searching for .opf files directly.
+    """
+    container_path = root / "META-INF" / "container.xml"
+    opf_path = None
+    
+    # First try to find the OPF file from container.xml
+    if container_path.exists():
+        try:
+            container_tree = ET.parse(container_path)
+            # Define namespace for container.xml
+            container_ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
+            # Look for rootfile with media-type="application/oebps-package+xml"
+            rootfiles = container_tree.findall(".//c:rootfile", container_ns)
+            
+            for rootfile in rootfiles:
+                if rootfile.get("media-type") == "application/oebps-package+xml":
+                    opf_path_str = rootfile.get("full-path")
+                    if opf_path_str:
+                        opf_path = root / opf_path_str
+                        if opf_path.exists():
+                            break
+        except Exception as e:
+            print(f"Warning: Error parsing container.xml: {e}")
+            opf_path = None
+    
+    # Fallback: If container.xml parsing fails, search for .opf files directly
+    if not opf_path or not opf_path.exists():
+        try:
+            opf_path = next(root.rglob("*.opf"))
+            print(f"Using fallback OPF file: {opf_path.relative_to(root)}")
+        except StopIteration:
+            raise FileNotFoundError("No .opf file found in the EPUB")
+    
+    # Parse the OPF file to get manifest
     tree = ET.parse(opf_path)
     ns = {"opf": "http://www.idpf.org/2007/opf"}
     manifest = {item.attrib["href"]: item
                 for item in tree.findall(".//opf:item", ns)}
+    
     return opf_path, tree, manifest, ns
 
 
