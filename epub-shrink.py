@@ -7,7 +7,7 @@ Usage:
 Options:
     -o, --output FILE          Output file (default: INPUT stem + '-min.epub')
     -q, --quality N            Initial image quality (0‑100, default 100 = lossless)
-    -t, --targetsize KB        Target size in KB (try lossy passes 95→25 until reached)
+    -t, --targetsize MB        Target size in MB (try lossy passes 95→25 until reached)
     -i, --purge PATTERN       Extra glob(s) to delete (can repeat)
     -v, --verbose              Print disposition of each processed file
 """
@@ -55,7 +55,7 @@ def parse_args():
     p.add_argument("-q", "--quality", type=int, default=100,
                    help="Initial lossy quality (0‑100, default 100=lossless)")
     p.add_argument("-t", "--targetsize", type=int,
-                   help="Target size in KB (after lossless step)")
+                   help="Target size in MB (after lossless step)")
     p.add_argument("-i", "--purge", action="append",
                    help="Extra glob pattern(s) to delete (can repeat)")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -254,7 +254,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
                     css_files.append(css_path)
                     if verbose:
                         print(f"Keeping referenced CSS file: {href}")
-            elif verbose:
+            else:
                 print(f"Dropping unreferenced CSS file: {href}")
     
     # Find font files referenced in CSS
@@ -336,9 +336,52 @@ def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifes
     all_patterns = DEFAULT_PURGES + (purge_patterns or [])
     for href in list(manifest.keys()):
         if any(fnmatch(href, pat) for pat in all_patterns):
-            remove_file(extract_dir, content_dir, href)
+            remove_from_spine(tree, href, verbose)
             remove_from_manifest(tree, href)
+            remove_file(extract_dir, content_dir, href)
             print(f"Purged file: {href}")
+
+def remove_from_spine(tree, href, verbose=False):
+    try:
+        # Find the manifest item with the matching href
+        manifest = tree.find("{http://www.idpf.org/2007/opf}manifest")
+        item = None
+        
+        # Search all items for the matching href
+        for manifest_item in manifest.findall("*"):
+            if manifest_item.get("href") == href:
+                item = manifest_item
+                break
+                
+        if item is None:
+            print(f"Warning: Could not find manifest item with href '{href}'")
+            return
+            
+        # Get the item's id
+        item_id = item.get("id")
+        
+        # Find and remove the corresponding spine itemref
+        spine = tree.find("{http://www.idpf.org/2007/opf}spine")
+        for itemref in list(spine):
+            if itemref.get("idref") == item_id:
+                spine.remove(itemref)
+                if verbose:
+                    print(f"Removed {href} from spine")
+                break
+    except Exception as e:
+        print(f"Warning: Could not remove {href} from spine: {e}")
+
+def remove_from_manifest(tree, href):
+    try:
+        parent = tree.getroot()
+        # from root, get manifest, then iterate through manifest items to find the one to remove
+        manifest = parent.find("{http://www.idpf.org/2007/opf}manifest")
+        for item in list(manifest):
+            if item.get("href") == href:
+                manifest.remove(item)
+                break
+    except Exception as e:
+        print(f"Warning: Could not remove {href} from manifest: {e}")
 
 def remove_file(extract_dir,content_dir, href):
     """Remove a file from the content directory."""
@@ -354,18 +397,6 @@ def remove_file(extract_dir,content_dir, href):
             file_path.unlink()
     except Exception as e:
         print(f"Warning: Could not remove {href}: {e}")
-
-def remove_from_manifest(tree, href):
-    try:
-        parent = tree.getroot()
-        # from root, get manifest, then iterate through manifest items to find the one to remove
-        manifest = parent.find("{http://www.idpf.org/2007/opf}manifest")
-        for item in list(manifest):
-            if item.get("href") == href:
-                manifest.remove(item)
-                break
-    except Exception as e:
-        print(f"Warning: Could not remove {href} from manifest: {e}")
 
 
 def css_referenced_fonts(root):
@@ -833,11 +864,11 @@ def main():
     q = args.quality
 
     # Check if target size is specified and not met
-    if args.targetsize and final / 1024 > args.targetsize and q > 15:
-        print(f"Target {args.targetsize}KB not met, current size {human(final)}")
+    if args.targetsize and final / (1024 * 1024) > args.targetsize and q > 15:
+        print(f"Target {args.targetsize}MB not met, current size {human(final)}")
         
         # Try progressively lower qualities until target is met or quality floor is reached
-        while args.targetsize and final / 1024 > args.targetsize and q > 15:
+        while args.targetsize and final / (1024 * 1024) > args.targetsize and q > 15:
             # Calculate new quality level
             q = max(q - 5, 25)
             print(f"Retrying with lossy quality={q}")
