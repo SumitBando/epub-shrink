@@ -199,47 +199,67 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
     href_re = re.compile(r'href=["\']([^"\']+)["\']')
     src_re = re.compile(r'src=["\']([^"\']+)["\']')
     url_re = re.compile(r'url\([\'"]?([^)\'"\s]+)')
-    
+    import_re = re.compile(r'@import\s+(?:url\()?[\'"]?([^)\'"\s;]+)')
+
     # Scan all XHTML files for references
     for file in all_xhtml_files:
         if file.exists():
             try:
-                content = file.read_text(encoding='utf-8', errors='ignore')
+                # First, try to parse as XML for robustness
+                xhtml_tree = ET.parse(file)
                 file_dir = file.parent
                 
-                # Find all href attributes (CSS files, links)
-                for match in href_re.finditer(content):
-                    href = match.group(1)
-                    referenced_files.add(href)
-                    # Handle relative paths by checking basename
-                    referenced_files.add(os.path.basename(href))
+                # Find all href, src, and xlink:href attributes
+                for attr in ['href', 'src']:
+                    for node in xhtml_tree.findall(f".//*[@{attr}]"):
+                        ref = node.get(attr)
+                        if ref:
+                            referenced_files.add(ref)
+                            referenced_files.add(os.path.basename(ref))
+                            if not ref.startswith('/') and not ref.startswith('http'):
+                                rel_path = os.path.normpath(str(file_dir / ref))
+                                rel_path_to_root = os.path.relpath(rel_path, str(root))
+                                referenced_files.add(rel_path_to_root)
+
+                # Handle xlink:href for SVG images
+                for node in xhtml_tree.findall(".//*[@xlink:href]", {"xlink": "http://www.w3.org/1999/xlink"}):
+                    ref = node.get("{http://www.w3.org/1999/xlink}href")
+                    if ref:
+                        referenced_files.add(ref)
+                        referenced_files.add(os.path.basename(ref))
+                        if not ref.startswith('/') and not ref.startswith('http'):
+                            rel_path = os.path.normpath(str(file_dir / ref))
+                            rel_path_to_root = os.path.relpath(rel_path, str(root))
+                            referenced_files.add(rel_path_to_root)
+                            
+            except ET.ParseError:
+                # Fallback to regex for non-well-formed files
+                if verbose:
+                    print(f"Warning: Could not parse {file} as XML, falling back to regex.")
+                try:
+                    content = file.read_text(encoding='utf-8', errors='ignore')
+                    file_dir = file.parent
                     
-                    # Handle relative paths - resolve against the current file's directory
-                    if not href.startswith('/') and not href.startswith('http'):
-                        # Try to get the absolute path relative to current file
-                        rel_path = os.path.normpath(str(file_dir / href))
-                        rel_path_to_root = os.path.relpath(rel_path, str(root))
-                        referenced_files.add(rel_path_to_root)
-                        if verbose and href.lower().endswith('.css'):
-                            print(f"Found stylesheet reference: {rel_path_to_root} in {file}")
-                
-                # Find all src attributes (images)
-                for match in src_re.finditer(content):
-                    src = match.group(1)
-                    referenced_files.add(src)
-                    # Handle relative paths by checking basename
-                    referenced_files.add(os.path.basename(src))
-                
-                # Find all url() references (CSS, images)
-                for match in url_re.finditer(content):
-                    url = match.group(1)
-                    referenced_files.add(url)
-                    # Handle relative paths by checking basename
-                    referenced_files.add(os.path.basename(url))
-                
+                    for match in href_re.finditer(content):
+                        href = match.group(1)
+                        referenced_files.add(href)
+                        referenced_files.add(os.path.basename(href))
+                        if not href.startswith('/') and not href.startswith('http'):
+                            rel_path = os.path.normpath(str(file_dir / href))
+                            rel_path_to_root = os.path.relpath(rel_path, str(root))
+                            referenced_files.add(rel_path_to_root)
+
+                    for match in src_re.finditer(content):
+                        src = match.group(1)
+                        referenced_files.add(src)
+                        referenced_files.add(os.path.basename(src))
+
+                except Exception as e:
+                    if verbose:
+                        print(f"Error scanning {file} with regex: {e}")
             except Exception as e:
                 if verbose:
-                    print(f"Error scanning {file}: {e}")
+                    print(f"Error processing {file}: {e}")
     
     # Process all CSS files to find font references
     css_files = []
@@ -257,31 +277,40 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
             else:
                 print(f"Dropping unreferenced CSS file: {href}")
     
-    # Find font files referenced in CSS
+    # Find font files and imports referenced in CSS
     font_urls = set()
     for css_file in css_files:
         try:
             content = css_file.read_text(encoding='utf-8', errors='ignore')
             
-            # Find all @font-face declarations
+            # Find all url() references
             for match in url_re.finditer(content):
                 url = match.group(1)
-                font_urls.add(url)
-                # Also add the basename for relative references
-                font_urls.add(os.path.basename(url))
-                
-                # Add to our referenced files
                 referenced_files.add(url)
                 referenced_files.add(os.path.basename(url))
-                
-                # Handle relative paths from the CSS file location
+                if any(url.lower().endswith(ext) for ext in font_extensions):
+                    font_urls.add(url)
+                    font_urls.add(os.path.basename(url))
+
                 if not url.startswith('/') and not url.startswith('http'):
-                    # Get absolute path relative to CSS file
                     rel_path = str(css_file.parent / url)
                     rel_path_to_root = os.path.relpath(rel_path, str(root))
                     referenced_files.add(rel_path_to_root)
                     if verbose and any(url.lower().endswith(ext) for ext in font_extensions):
                         print(f"Found font reference: {rel_path_to_root} in {css_file}")
+
+            # Find all @import statements
+            for match in import_re.finditer(content):
+                url = match.group(1)
+                referenced_files.add(url)
+                referenced_files.add(os.path.basename(url))
+                if not url.startswith('/') and not url.startswith('http'):
+                    rel_path = str(css_file.parent / url)
+                    rel_path_to_root = os.path.relpath(rel_path, str(root))
+                    referenced_files.add(rel_path_to_root)
+                    if verbose:
+                        print(f"Found @import reference: {rel_path_to_root} in {css_file}")
+
         except Exception as e:
             if verbose:
                 print(f"Error scanning CSS file {css_file}: {e}")
