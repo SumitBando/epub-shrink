@@ -754,10 +754,15 @@ def analyze_image_quality(path: pathlib.Path, verbose=False):
 
 
 def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
-    with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        for file in root.rglob("*"):
-            if file.is_file():
-                z.write(file, file.relative_to(root))
+    with zipfile.ZipFile(out_path, "w") as z:
+        mimetype_path = root / "mimetype"
+        if mimetype_path.exists():
+            # this file must be the first and uncompressed
+            z.write(mimetype_path, "mimetype", compress_type=zipfile.ZIP_STORED)
+
+        for file in sorted(root.rglob("*")) :
+            if file.is_file() and file.name != "mimetype":
+                z.write(file, file.relative_to(root), compress_type=zipfile.ZIP_DEFLATED)
 
 
 def process_epub(epub_path, quality, out_path, purge_patterns, verbose=False, keep_files=None):
