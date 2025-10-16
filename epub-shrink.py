@@ -17,7 +17,6 @@ import pathlib
 import shutil
 import sys
 import tempfile
-import re
 import zipfile
 import subprocess
 import os
@@ -25,6 +24,8 @@ from collections import defaultdict
 from xml.etree import ElementTree as ET
 from fnmatch import fnmatch
 from PIL import Image
+from bs4 import BeautifulSoup
+import tinycss2
 
 TMP_ROOT = pathlib.Path(tempfile.gettempdir())
 
@@ -191,76 +192,30 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
     referenced_files = set()
     
     # Extensions to look for in content
-    # image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp')
-    # css_extensions = ('.css',)
     font_extensions = ('.ttf', '.otf', '.woff', '.woff2')
-    
-    # Regular expressions to find references in HTML
-    href_re = re.compile(r'href=["\']([^"\']+)["\']')
-    src_re = re.compile(r'src=["\']([^"\']+)["\']')
-    url_re = re.compile(r'url\([\'"]?([^)\'"\s]+)')
-    import_re = re.compile(r'@import\s+(?:url\()?[\'"]?([^)\'"\s;]+)')
 
     # Scan all XHTML files for references
     for file in all_xhtml_files:
         if file.exists():
             try:
-                # First, try to parse as XML for robustness
-                xhtml_tree = ET.parse(file)
-                file_dir = file.parent
-                
-                # Find all href, src, and xlink:href attributes
-                for attr in ['href', 'src']:
-                    for node in xhtml_tree.findall(f".//*[@{attr}]"):
-                        ref = node.get(attr)
-                        if ref:
-                            referenced_files.add(ref)
-                            referenced_files.add(os.path.basename(ref))
-                            if not ref.startswith('/') and not ref.startswith('http'):
-                                rel_path = os.path.normpath(str(file_dir / ref))
-                                rel_path_to_root = os.path.relpath(rel_path, str(root))
-                                referenced_files.add(rel_path_to_root)
-
-                # Handle xlink:href for SVG images
-                for node in xhtml_tree.findall(".//*[@xlink:href]", {"xlink": "http://www.w3.org/1999/xlink"}):
-                    ref = node.get("{http://www.w3.org/1999/xlink}href")
-                    if ref:
-                        referenced_files.add(ref)
-                        referenced_files.add(os.path.basename(ref))
-                        if not ref.startswith('/') and not ref.startswith('http'):
-                            rel_path = os.path.normpath(str(file_dir / ref))
-                            rel_path_to_root = os.path.relpath(rel_path, str(root))
-                            referenced_files.add(rel_path_to_root)
-                            
-            except ET.ParseError:
-                # Fallback to regex for non-well-formed files
-                if verbose:
-                    print(f"Warning: Could not parse {file} as XML, falling back to regex.")
-                try:
-                    content = file.read_text(encoding='utf-8', errors='ignore')
+                with open(file, 'r', encoding='utf-8') as f:
+                    soup = BeautifulSoup(f, 'lxml')
                     file_dir = file.parent
-                    
-                    for match in href_re.finditer(content):
-                        href = match.group(1)
-                        referenced_files.add(href)
-                        referenced_files.add(os.path.basename(href))
-                        if not href.startswith('/') and not href.startswith('http'):
-                            rel_path = os.path.normpath(str(file_dir / href))
-                            rel_path_to_root = os.path.relpath(rel_path, str(root))
-                            referenced_files.add(rel_path_to_root)
 
-                    for match in src_re.finditer(content):
-                        src = match.group(1)
-                        referenced_files.add(src)
-                        referenced_files.add(os.path.basename(src))
-
-                except Exception as e:
-                    if verbose:
-                        print(f"Error scanning {file} with regex: {e}")
+                    for attribute in ['href', 'src']:
+                        for tag in soup.find_all(attrs={attribute: True}):
+                            ref = tag[attribute]
+                            if ref:
+                                referenced_files.add(ref)
+                                referenced_files.add(os.path.basename(ref))
+                                if not ref.startswith('/') and not ref.startswith('http'):
+                                    rel_path = os.path.normpath(str(file_dir / ref))
+                                    rel_path_to_root = os.path.relpath(rel_path, str(root))
+                                    referenced_files.add(rel_path_to_root)
             except Exception as e:
                 if verbose:
                     print(f"Error processing {file}: {e}")
-    
+
     # Process all CSS files to find font references
     css_files = []
     
@@ -282,34 +237,37 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
     for css_file in css_files:
         try:
             content = css_file.read_text(encoding='utf-8', errors='ignore')
+            rules = tinycss2.parse_stylesheet(content, skip_comments=True, skip_whitespace=True)
             
-            # Find all url() references
-            for match in url_re.finditer(content):
-                url = match.group(1)
-                referenced_files.add(url)
-                referenced_files.add(os.path.basename(url))
-                if any(url.lower().endswith(ext) for ext in font_extensions):
-                    font_urls.add(url)
-                    font_urls.add(os.path.basename(url))
+            for rule in rules:
+                if rule.type == 'at-rule' and rule.at_keyword == 'import':
+                    for token in rule.prelude:
+                        if token.type == 'string' or token.type == 'url':
+                            url = token.value
+                            referenced_files.add(url)
+                            referenced_files.add(os.path.basename(url))
+                            if not url.startswith('/') and not url.startswith('http'):
+                                rel_path = str(css_file.parent / url)
+                                rel_path_to_root = os.path.relpath(rel_path, str(root))
+                                referenced_files.add(rel_path_to_root)
+                                if verbose:
+                                    print(f"Found @import reference: {rel_path_to_root} in {css_file}")
+                elif rule.type == 'qualified-rule':
+                    for token in rule.content:
+                        if token.type == 'url':
+                            url = token.value
+                            referenced_files.add(url)
+                            referenced_files.add(os.path.basename(url))
+                            if any(url.lower().endswith(ext) for ext in font_extensions):
+                                font_urls.add(url)
+                                font_urls.add(os.path.basename(url))
 
-                if not url.startswith('/') and not url.startswith('http'):
-                    rel_path = str(css_file.parent / url)
-                    rel_path_to_root = os.path.relpath(rel_path, str(root))
-                    referenced_files.add(rel_path_to_root)
-                    if verbose and any(url.lower().endswith(ext) for ext in font_extensions):
-                        print(f"Found font reference: {rel_path_to_root} in {css_file}")
-
-            # Find all @import statements
-            for match in import_re.finditer(content):
-                url = match.group(1)
-                referenced_files.add(url)
-                referenced_files.add(os.path.basename(url))
-                if not url.startswith('/') and not url.startswith('http'):
-                    rel_path = str(css_file.parent / url)
-                    rel_path_to_root = os.path.relpath(rel_path, str(root))
-                    referenced_files.add(rel_path_to_root)
-                    if verbose:
-                        print(f"Found @import reference: {rel_path_to_root} in {css_file}")
+                            if not url.startswith('/') and not url.startswith('http'):
+                                rel_path = str(css_file.parent / url)
+                                rel_path_to_root = os.path.relpath(rel_path, str(root))
+                                referenced_files.add(rel_path_to_root)
+                                if verbose and any(url.lower().endswith(ext) for ext in font_extensions):
+                                    print(f"Found font reference: {rel_path_to_root} in {css_file}")
 
         except Exception as e:
             if verbose:
@@ -432,14 +390,18 @@ def css_referenced_fonts(root):
     css_files = list(root.rglob("*.css"))
     font_refs = set()
     font_basenames = set()
-    url_re = re.compile(r"url\(['\"]?([^)'\"\s]+)")
     for css in css_files:
-        for m in url_re.finditer(css.read_text(errors="ignore")):
-            href = m.group(1)
-            if href.lower().endswith((".ttf", ".otf", ".woff", ".woff2")):
-                # Store both the resolved path and the basename
-                font_refs.add((css.parent / href).resolve())
-                font_basenames.add(os.path.basename(href))
+        content = css.read_text(errors="ignore")
+        rules = tinycss2.parse_stylesheet(content, skip_comments=True, skip_whitespace=True)
+        for rule in rules:
+            if rule.type == 'qualified-rule':
+                for token in rule.content:
+                    if token.type == 'url':
+                        href = token.value
+                        if href.lower().endswith((".ttf", ".otf", ".woff", ".woff2")):
+                            # Store both the resolved path and the basename
+                            font_refs.add((css.parent / href).resolve())
+                            font_basenames.add(os.path.basename(href))
     
     # Also find all actual font files in the EPUB
     all_fonts = set()
@@ -904,7 +866,7 @@ def main():
         # Try progressively lower qualities until target is met or quality floor is reached
         while args.targetsize and final / (1024 * 1024) > args.targetsize and q > 15:
             # Calculate new quality level
-            q = max(q - 5, 25)
+            q = max(q - 5, 15)
             print(f"Retrying with lossy quality={q}")
             
             # Clean up previous temporary directory
