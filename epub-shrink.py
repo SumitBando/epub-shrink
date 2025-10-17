@@ -29,8 +29,16 @@ import tinycss2
 
 TMP_ROOT = pathlib.Path(tempfile.gettempdir())
 
+GLOBAL_EXTRACT_DIR = None
+GLOBAL_OPF_PATH = None
+GLOBAL_TREE = None
+GLOBAL_MANIFEST = None
+GLOBAL_NS = None
+GLOBAL_CONTENT_DIR = None
+GLOBAL_KEEP_FILES = None
 
-def check_compressors():
+
+def verify_compressors_availability():
     """Check if required image compressors are available."""
     if not shutil.which("jpegoptim"):
         print("Please install missing jpeg compressor jpegoptim for JPEG optimization")
@@ -80,7 +88,7 @@ def explode(epub_path: pathlib.Path) -> pathlib.Path:
 
 
 def load_opf(root: pathlib.Path):
-    """Find and load the OPF file using container.xml or fallback to direct search.
+    """Find and load the 'Open Package Format' file using container.xml or fallback to direct search.
     
     According to the EPUB spec, META-INF/container.xml points to the OPF file.
     If container.xml isn't found or doesn't contain a valid reference,
@@ -124,6 +132,27 @@ def load_opf(root: pathlib.Path):
                 for item in tree.findall(".//opf:item", ns)}
     
     return opf_path, tree, manifest, ns
+
+
+def analyze_epub(epub_path, purge_patterns, verbose=False):
+    global GLOBAL_KEEP_FILES, GLOBAL_CONTENT_DIR
+
+    extract_dir = explode(epub_path)
+    opf_path, tree, manifest, ns = load_opf(extract_dir)
+    content_dir = opf_path.parent
+    GLOBAL_CONTENT_DIR = content_dir.relative_to(extract_dir)
+
+    purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest, verbose)
+    if verbose:
+        print("Performing reference analysis...")
+    remove_unreferenced(manifest, tree, ns, extract_dir, content_dir, verbose)
+    remove_unreferenced_fonts(extract_dir, manifest, content_dir, verbose)
+
+    GLOBAL_KEEP_FILES = set(manifest.keys())
+    if verbose:
+        print(f"Found {len(GLOBAL_KEEP_FILES)} files to preserve after reference analysis.")
+    
+    shutil.rmtree(extract_dir)
 
 
 def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=False):
@@ -293,11 +322,14 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
     # Now remove files that are not in files_to_keep
     for href, node in list(manifest.items()):
         if href not in files_to_keep:
-            if verbose:
-                print(f"Removing unreferenced file: {href}")
             file_path = root / href
             if file_path.exists():
                 file_path.unlink()
+                if verbose:
+                    print(f"Successfully removed file from disk: {href}")
+            else:
+                if verbose:
+                    print(f"File to remove did not exist on disk: {href}")
             # Use standard library approach for removing nodes
             parent = tree.getroot()
             for child in list(parent):
@@ -756,20 +788,9 @@ def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
                 z.write(file, file.relative_to(root), compress_type=zipfile.ZIP_DEFLATED)
 
 
-def process_epub(epub_path, quality, out_path, purge_patterns, verbose=False, keep_files=None):
-    """Process an EPUB file with the given quality setting.
-    
-    Args:
-        epub_path: Path to the original EPUB file
-        quality: Image quality (0-100)
-        out_path: Output path for the compressed EPUB (if None, will be generated based on quality)
-        purge_patterns: List of patterns to purge
-        verbose: Whether to print verbose output
-        keep_files: Optional pre-computed list of files to keep (skip reference analysis if provided)
-        
-    Returns:
-        Tuple of (extract_dir, final_size, keep_files, out_path)
-    """
+def process_epub(epub_path, quality, out_path, verbose=False):
+    """Process an EPUB file with the given quality setting."""
+    global GLOBAL_KEEP_FILES, GLOBAL_CONTENT_DIR
     extract_dir = explode(epub_path)
     
     # If out_path is not provided, generate based on quality
@@ -783,46 +804,29 @@ def process_epub(epub_path, quality, out_path, purge_patterns, verbose=False, ke
     opf_path, tree, manifest, ns = load_opf(extract_dir)
     
     # Compute content directory (directory containing the OPF file)
-    content_dir = opf_path.parent
+    content_dir = extract_dir / GLOBAL_CONTENT_DIR
     
-    # If we don't have pre-computed keep_files, perform reference analysis
-    if keep_files is None:
-        purge_unwanted_files(purge_patterns,
-                      extract_dir, content_dir, tree, manifest, verbose)
-        
-        if verbose:
-            print("Performing reference analysis...")
-        remove_unreferenced(manifest, tree, ns, extract_dir, content_dir, verbose)
-        
-        # Finally clean up unreferenced fonts
-        remove_unreferenced_fonts(extract_dir, manifest, content_dir, verbose)
-        
-        # Store the list of files that survived reference analysis
-        keep_files = set(manifest.keys())
-        if verbose:
-            print(f"Found {len(keep_files)} files to preserve after reference analysis.")
-    else:
-        # Use the pre-computed list to skip reference analysis
-        if verbose:
-            print(f"Using pre-computed list of {len(keep_files)} files to preserve.")
-        
-        # Remove files not in the keep_files list
-        to_remove = []
-        for href, node in list(manifest.items()):
-            if href not in keep_files:
-                to_remove.append(href)
-                file_path = extract_dir / href
-                if file_path.exists():
-                    file_path.unlink()
-                # Use standard library approach for removing nodes
-                parent = tree.getroot()
-                for child in list(parent):
-                    if child == node:
-                        parent.remove(child)
-                        break
-        
-        if verbose and to_remove:
-            print(f"Removed {len(to_remove)} files not in the keep list.")
+    # Use the pre-computed list to skip reference analysis
+    if verbose:
+        print(f"Using pre-computed list of {len(GLOBAL_KEEP_FILES)} files to preserve.")
+    
+    # Remove files not in the keep_files list
+    to_remove = []
+    for href, node in list(manifest.items()):
+        if href not in GLOBAL_KEEP_FILES:
+            to_remove.append(href)
+            file_path = extract_dir / href
+            if file_path.exists():
+                file_path.unlink()
+            # Use standard library approach for removing nodes
+            parent = tree.getroot()
+            for child in list(parent):
+                if child == node:
+                    parent.remove(child)
+                    break
+    
+    if verbose and to_remove:
+        print(f"Removed {len(to_remove)} files not in the keep list.")
     
     # Save the cleaned tree to opf file
     tree.write(opf_path, encoding="utf-8", xml_declaration=True)
@@ -834,26 +838,24 @@ def process_epub(epub_path, quality, out_path, purge_patterns, verbose=False, ke
     rebuild_epub(extract_dir, out_path)
     final_size = out_path.stat().st_size
     
-    return extract_dir, final_size, keep_files, out_path
+    return extract_dir, final_size, out_path
 
 
 def main():
+    verify_compressors_availability()
     args = parse_args()
-    check_compressors()
-    original = args.epub.stat().st_size
-    print("Original:", human(original))
+    input_file = args.epub
+    original_size = input_file.stat().st_size
+    print("Original size:", human(original_size))
 
-    # Initial processing
-    keep_files = None
+    analyze_epub(input_file, args.purge, args.verbose)
     
     # First attempt with initial quality
-    extract_dir, final, keep_files, out_path = process_epub(
-        args.epub,
+    extract_dir, final, out_path = process_epub(
+        input_file,
         quality=args.quality, 
         out_path=args.output,  # Use user specified output if provided, otherwise None
-        purge_patterns=args.purge, 
-        verbose=args.verbose,
-        keep_files=keep_files
+        verbose=args.verbose
     )
     
     # Store initial quality
@@ -873,17 +875,15 @@ def main():
             shutil.rmtree(extract_dir)
             
             # Process the EPUB with new quality setting, reusing the keep_files list
-            extract_dir, final, _, out_path = process_epub(
-                args.epub,
+            extract_dir, final, out_path = process_epub(
+                input_file,
                 quality=q, 
                 out_path=args.output,  # Use user specified output if provided, otherwise None
-                purge_patterns=args.purge, 
-                verbose=args.verbose,
-                keep_files=keep_files  # Reuse the computed list of files to keep
+                verbose=args.verbose
             )
             print(f"Quality {q}: {human(final)}")
     
-    print(f"Final:   {human(final)}  (saved {(original - final) / original:.1%})")
+    print(f"Final:   {human(final)}  (saved {(original_size - final) / original_size:.1%})")
     print(f"Output file: {out_path}")
     shutil.rmtree(extract_dir)
 
