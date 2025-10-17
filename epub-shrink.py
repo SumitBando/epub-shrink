@@ -34,8 +34,9 @@ GLOBAL_OPF_PATH = None
 GLOBAL_TREE = None
 GLOBAL_MANIFEST = None
 GLOBAL_NS = None
-GLOBAL_CONTENT_DIR = None
 GLOBAL_KEEP_FILES = None
+GLOBAL_INPUT_FILE = None
+GLOBAL_VERBOSE = False
 
 
 def verify_compressors_availability():
@@ -77,24 +78,26 @@ def parse_args():
     return args
 
 
-def explode(epub_path: pathlib.Path) -> pathlib.Path:
+def unzip() -> pathlib.Path:
+    global GLOBAL_INPUT_FILE, GLOBAL_EXTRACT_DIR
     """Extract the EPUB to a new temporary directory."""
-    extract_dir = TMP_ROOT / f"epub-shrink-{os.getpid()}"
-    if extract_dir.exists():
-        shutil.rmtree(extract_dir)
-    extract_dir.mkdir()
-    zipfile.ZipFile(epub_path).extractall(extract_dir)
-    return extract_dir
+    GLOBAL_EXTRACT_DIR = TMP_ROOT / f"epub-shrink-{os.getpid()}"
+    if GLOBAL_EXTRACT_DIR.exists():
+        shutil.rmtree(GLOBAL_EXTRACT_DIR)
+    GLOBAL_EXTRACT_DIR.mkdir()
+    zipfile.ZipFile(GLOBAL_INPUT_FILE).extractall(GLOBAL_EXTRACT_DIR)
+    return GLOBAL_EXTRACT_DIR
 
 
-def load_opf(root: pathlib.Path):
-    """Find and load the 'Open Package Format' file using container.xml or fallback to direct search.
+def load_opf():
+    """Find and load the 'Open Package Format' file using container.xml or fallback to direct search. 
     
     According to the EPUB spec, META-INF/container.xml points to the OPF file.
     If container.xml isn't found or doesn't contain a valid reference,
     fall back to searching for .opf files directly.
     """
-    container_path = root / "META-INF" / "container.xml"
+    global GLOBAL_EXTRACT_DIR
+    container_path = GLOBAL_EXTRACT_DIR / "META-INF" / "container.xml"
     opf_path = None
     
     # First try to find the OPF file from container.xml
@@ -110,7 +113,7 @@ def load_opf(root: pathlib.Path):
                 if rootfile.get("media-type") == "application/oebps-package+xml":
                     opf_path_str = rootfile.get("full-path")
                     if opf_path_str:
-                        opf_path = root / opf_path_str
+                        opf_path = GLOBAL_EXTRACT_DIR / opf_path_str
                         if opf_path.exists():
                             break
         except Exception as e:
@@ -120,8 +123,8 @@ def load_opf(root: pathlib.Path):
     # Fallback: If container.xml parsing fails, search for .opf files directly
     if not opf_path or not opf_path.exists():
         try:
-            opf_path = next(root.rglob("*.opf"))
-            print(f"Using fallback OPF file: {opf_path.relative_to(root)}")
+            opf_path = next(GLOBAL_EXTRACT_DIR.rglob("*.opf"))
+            print(f"Using fallback OPF file: {opf_path.relative_to(GLOBAL_EXTRACT_DIR)}")
         except StopIteration:
             raise FileNotFoundError("No .opf file found in the EPUB")
     
@@ -134,28 +137,9 @@ def load_opf(root: pathlib.Path):
     return opf_path, tree, manifest, ns
 
 
-def analyze_epub(epub_path, purge_patterns, verbose=False):
-    global GLOBAL_KEEP_FILES, GLOBAL_CONTENT_DIR
 
-    extract_dir = explode(epub_path)
-    opf_path, tree, manifest, ns = load_opf(extract_dir)
-    content_dir = opf_path.parent
-    GLOBAL_CONTENT_DIR = content_dir.relative_to(extract_dir)
-
-    purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest, verbose)
-    if verbose:
-        print("Performing reference analysis...")
-    remove_unreferenced(manifest, tree, ns, extract_dir, content_dir, verbose)
-    remove_unreferenced_fonts(extract_dir, manifest, content_dir, verbose)
-
-    GLOBAL_KEEP_FILES = set(manifest.keys())
-    if verbose:
-        print(f"Found {len(GLOBAL_KEEP_FILES)} files to preserve after reference analysis.")
-    
-    shutil.rmtree(extract_dir)
-
-
-def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=False):
+def remove_unreferenced(manifest, tree, ns, root, content_dir=None):
+    global GLOBAL_VERBOSE
     spine_refs = {item.attrib["idref"] for item in tree.findall(".//opf:itemref", ns)}
     keep_hrefs = {i.attrib["href"] for i in manifest.values()
                   if i.attrib["id"] in spine_refs}
@@ -168,7 +152,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
             # Check if file isn't already in the keep set
             if href not in files_to_keep:
                 files_to_keep.add(href)
-                if verbose:
+                if GLOBAL_VERBOSE:
                     print(f"Adding file from guide: {href} (type: {reference.get('type', 'unknown')})")
     
     # First check meta tags with name="cover"
@@ -185,7 +169,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
                 cover_href = item.get("href")
                 if cover_href:
                     files_to_keep.add(cover_href)
-                    if verbose:
+                    if GLOBAL_VERBOSE:
                         print(f"Preserving cover image from metadata: {cover_href}")
     
     # Also check for cover in properties
@@ -195,7 +179,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
             cover_href = item.get("href")
             if cover_href:
                 files_to_keep.add(cover_href)
-                if verbose:
+                if GLOBAL_VERBOSE:
                     print(f"Preserving cover image from properties: {cover_href}")
     
 
@@ -211,7 +195,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
     for href, node in list(manifest.items()):
         if any(fnmatch(href, pat) for pat in essential_patterns):
             files_to_keep.add(href)
-            if verbose:
+            if GLOBAL_VERBOSE:
                 print(f"Preserving essential file: {href}")
     
     # Second pass - find all referenced files from XHTML files
@@ -242,7 +226,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
                                     rel_path_to_root = os.path.relpath(rel_path, str(root))
                                     referenced_files.add(rel_path_to_root)
             except Exception as e:
-                if verbose:
+                if GLOBAL_VERBOSE:
                     print(f"Error processing {file}: {e}")
 
     # Process all CSS files to find font references
@@ -256,7 +240,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
                 css_path = root / href
                 if css_path.exists():
                     css_files.append(css_path)
-                    if verbose:
+                    if GLOBAL_VERBOSE:
                         print(f"Keeping referenced CSS file: {href}")
             else:
                 print(f"Dropping unreferenced CSS file: {href}")
@@ -279,7 +263,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
                                 rel_path = str(css_file.parent / url)
                                 rel_path_to_root = os.path.relpath(rel_path, str(root))
                                 referenced_files.add(rel_path_to_root)
-                                if verbose:
+                                if GLOBAL_VERBOSE:
                                     print(f"Found @import reference: {rel_path_to_root} in {css_file}")
                 elif rule.type == 'qualified-rule':
                     for token in rule.content:
@@ -295,11 +279,11 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
                                 rel_path = str(css_file.parent / url)
                                 rel_path_to_root = os.path.relpath(rel_path, str(root))
                                 referenced_files.add(rel_path_to_root)
-                                if verbose and any(url.lower().endswith(ext) for ext in font_extensions):
+                                if GLOBAL_VERBOSE and any(url.lower().endswith(ext) for ext in font_extensions):
                                     print(f"Found font reference: {rel_path_to_root} in {css_file}")
 
         except Exception as e:
-            if verbose:
+            if GLOBAL_VERBOSE:
                 print(f"Error scanning CSS file {css_file}: {e}")
     
     # Now check if any file in the manifest is referenced
@@ -309,14 +293,14 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
         # Check for direct reference
         if href in referenced_files or filename in referenced_files:
             files_to_keep.add(href)
-            if verbose:
+            if GLOBAL_VERBOSE:
                 print(f"Found reference to: {href}")
         
         # Special handling for fonts - check against font URLs
         if any(href.lower().endswith(ext) for ext in font_extensions):
             if href in font_urls or filename in font_urls:
                 files_to_keep.add(href)
-                if verbose:
+                if GLOBAL_VERBOSE:
                     print(f"Found font reference: {href}")
     
     # Now remove files that are not in files_to_keep
@@ -325,10 +309,10 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
             file_path = root / href
             if file_path.exists():
                 file_path.unlink()
-                if verbose:
+                if GLOBAL_VERBOSE:
                     print(f"Successfully removed file from disk: {href}")
             else:
-                if verbose:
+                if GLOBAL_VERBOSE:
                     print(f"File to remove did not exist on disk: {href}")
             # Use standard library approach for removing nodes
             parent = tree.getroot()
@@ -338,8 +322,9 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, verbose=Fals
                     break
 
 
-def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest, verbose=False):
-    if verbose:
+def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest):
+    global GLOBAL_VERBOSE
+    if GLOBAL_VERBOSE:
         print("Purging unwanted files...")
     DEFAULT_PURGES = [
         "*.DS_Store",
@@ -355,12 +340,13 @@ def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifes
     all_patterns = DEFAULT_PURGES + (purge_patterns or [])
     for href in list(manifest.keys()):
         if any(fnmatch(href, pat) for pat in all_patterns):
-            remove_from_spine(tree, href, verbose)
+            remove_from_spine(tree, href)
             remove_from_manifest(tree, href)
             remove_file(extract_dir, content_dir, href)
-            print(f"Purged file: {href}")
+            print(f"Removed file: {href} from spine, manifest, and disk")
 
-def remove_from_spine(tree, href, verbose=False):
+def remove_from_spine(tree, href):
+    global GLOBAL_VERBOSE
     try:
         # Find the manifest item with the matching href
         manifest = tree.find("{http://www.idpf.org/2007/opf}manifest")
@@ -384,7 +370,7 @@ def remove_from_spine(tree, href, verbose=False):
         for itemref in list(spine):
             if itemref.get("idref") == item_id:
                 spine.remove(itemref)
-                if verbose:
+                if GLOBAL_VERBOSE:
                     print(f"Removed {href} from spine")
                 break
     except Exception as e:
@@ -450,10 +436,10 @@ def css_referenced_fonts(root):
     
     return font_refs
 
-
-def remove_unreferenced_fonts(root, manifest, content_dir=None, verbose=False):
+def remove_unreferenced_fonts(root, manifest, content_dir=None):
+    global GLOBAL_VERBOSE
     referenced = css_referenced_fonts(root)
-    if verbose:
+    if GLOBAL_VERBOSE:
         print("Referenced fonts:", *[str(f.relative_to(root)) for f in referenced], sep="\n  ")
     
     removed = []
@@ -484,7 +470,7 @@ def remove_unreferenced_fonts(root, manifest, content_dir=None, verbose=False):
             else:
                 preserved.append(href)
     
-    if verbose:
+    if GLOBAL_VERBOSE:
         if preserved:
             print("Preserved fonts:", *preserved, sep="\n  ")
         if removed:
@@ -493,7 +479,8 @@ def remove_unreferenced_fonts(root, manifest, content_dir=None, verbose=False):
     return removed
 
 
-def compress_image(path: pathlib.Path, quality: int, verbose=False):
+def compress_image(path: pathlib.Path, quality: int):
+    global GLOBAL_VERBOSE
     before = path.stat().st_size
     try:
         img = Image.open(path)
@@ -505,7 +492,7 @@ def compress_image(path: pathlib.Path, quality: int, verbose=False):
                 subprocess.run(cmd, stdout=subprocess.DEVNULL)
             elif fmt == "PNG":
                 oxipng_args = ["oxipng", "-o", "4", "--strip", "safe"]
-                # if not verbose:
+                # if not GLOBAL_VERBOSE:
                 # oxipng_args.append("-q")
                 oxipng_args.append(str(path))
                 # print(f"Running oxipng: {' '.join(oxipng_args)}")
@@ -520,12 +507,13 @@ def compress_image(path: pathlib.Path, quality: int, verbose=False):
                 img = img.convert("P", palette=Image.ADAPTIVE)
                 img.save(path, format="PNG", optimize=True)
     except Exception as e:
-        if verbose:
+        if GLOBAL_VERBOSE:
             print("Image compress error:", path, e)
     return before, path.stat().st_size
 
 
-def compress_images(root, quality, verbose=False):
+def compress_images(root, quality):
+    global GLOBAL_VERBOSE
     # Find all image paths
     jpg_paths = [*root.rglob("*.jpg"), *root.rglob("*.jpeg")]
     png_paths = list(root.rglob("*.png"))
@@ -543,14 +531,14 @@ def compress_images(root, quality, verbose=False):
             png_dirs[png_path.parent].append(png_path)
         
         for directory, files in png_dirs.items():
-            if verbose:
+            if GLOBAL_VERBOSE:
                 print(f"\nProcessing {len(files)} PNG files in {directory.relative_to(root)} using oxipng with quality: {quality}...")
             
             # Record sizes and analysis data before compression
             before_data = {}
             for f in files:
-                if verbose:
-                    image_info = analyze_image_quality(f, verbose)
+                if GLOBAL_VERBOSE:
+                    image_info = analyze_image_quality(f)
                     before_data[f] = {
                         'size': f.stat().st_size,
                         'analysis': image_info
@@ -568,7 +556,7 @@ def compress_images(root, quality, verbose=False):
             for f in files:
                 before = before_data[f]['size']
                 after = f.stat().st_size
-                if verbose:
+                if GLOBAL_VERBOSE:
                     relative_path = f.relative_to(root)
                     reduction_pct = (before - after) / before * 100 if before > 0 else 0
                     image_info = before_data[f]['analysis']
@@ -590,14 +578,14 @@ def compress_images(root, quality, verbose=False):
             jpg_dirs[jpg_path.parent].append(jpg_path)
         
         for directory, files in jpg_dirs.items():
-            if verbose:
+            if GLOBAL_VERBOSE:
                 print(f"\nProcessing {len(files)} JPEG files in {directory.relative_to(root)} using jpegoptim with quality: {quality}...")
             
             # Record sizes and analysis data before compression
             before_data = {}
             for f in files:
-                if verbose:
-                    image_info = analyze_image_quality(f, verbose)
+                if GLOBAL_VERBOSE:
+                    image_info = analyze_image_quality(f)
                     before_data[f] = {
                         'size': f.stat().st_size,
                         'analysis': image_info
@@ -607,7 +595,7 @@ def compress_images(root, quality, verbose=False):
             
             # Run the optimization
             jpegoptim_args = ["jpegoptim", "--strip-all"]
-            if not verbose:
+            if not GLOBAL_VERBOSE:
                 jpegoptim_args.append("-q")
             
             jpegoptim_args.extend([str(f) for f in files])
@@ -617,7 +605,7 @@ def compress_images(root, quality, verbose=False):
             for f in files:
                 before = before_data[f]['size']
                 after = f.stat().st_size
-                if verbose:
+                if GLOBAL_VERBOSE:
                     relative_path = f.relative_to(root)
                     reduction_pct = (before - after) / before * 100 if before > 0 else 0
                     image_info = before_data[f]['analysis']
@@ -638,13 +626,13 @@ def compress_images(root, quality, verbose=False):
         before_size = p.stat().st_size
         image_info = None
         
-        if verbose:
-            image_info = analyze_image_quality(p, verbose)
+        if GLOBAL_VERBOSE:
+            image_info = analyze_image_quality(p)
         
         # Compress the image
-        b, a = compress_image(p, quality, verbose=False)  # Disable verbose in compress_image
+        b, a = compress_image(p, quality)
         
-        if verbose:
+        if GLOBAL_VERBOSE:
             relative_path = p.relative_to(root)
             reduction_pct = (b - a) / b * 100 if b > 0 else 0
             
@@ -672,16 +660,16 @@ def compress_images(root, quality, verbose=False):
     return savings
 
 
-def analyze_image_quality(path: pathlib.Path, verbose=False):
+def analyze_image_quality(path: pathlib.Path):
     """Analyze the quality of an image file.
     
     Args:
         path: Path to the image file
-        verbose: Whether to print verbose output
         
     Returns:
         A tuple of (image format, estimated quality, color mode, dimensions)
     """
+    global GLOBAL_VERBOSE
     try:
         img = Image.open(path)
         fmt = img.format
@@ -713,7 +701,7 @@ def analyze_image_quality(path: pathlib.Path, verbose=False):
                                     # Rough formula, inversely proportional to average quantization value
                                     estimated_quality = min(100, max(1, int(100 - (avg_qtable / 2.5))))
             except Exception as e:
-                if verbose:
+                if GLOBAL_VERBOSE:
                     print(f"Error estimating JPEG quality: {e}")
                     
         # For PNG, check color type and bit depth
@@ -752,7 +740,7 @@ def analyze_image_quality(path: pathlib.Path, verbose=False):
                     "software": software
                 }
             except Exception as e:
-                if verbose:
+                if GLOBAL_VERBOSE:
                     print(f"Error getting PNG info: {e}")
                 
         # Calculate file size
@@ -768,7 +756,7 @@ def analyze_image_quality(path: pathlib.Path, verbose=False):
         }
         
     except Exception as e:
-        if verbose:
+        if GLOBAL_VERBOSE:
             print(f"Error analyzing image {path}: {e}")
         return {
             "format": "unknown",
@@ -783,31 +771,44 @@ def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
             # this file must be the first and uncompressed
             z.write(mimetype_path, "mimetype", compress_type=zipfile.ZIP_STORED)
 
-        for file in sorted(root.rglob("*")) :
+        for file in sorted(root.rglob("*")):
             if file.is_file() and file.name != "mimetype":
                 z.write(file, file.relative_to(root), compress_type=zipfile.ZIP_DEFLATED)
 
+def analyze_epub(purge_patterns):
+    pass
 
-def process_epub(epub_path, quality, out_path, verbose=False):
+def process_epub(quality, out_path, purge_patterns):
     """Process an EPUB file with the given quality setting."""
-    global GLOBAL_KEEP_FILES, GLOBAL_CONTENT_DIR
-    extract_dir = explode(epub_path)
-    
+
+    global GLOBAL_KEEP_FILES, GLOBAL_INPUT_FILE, GLOBAL_VERBOSE
+
+    extract_dir = unzip()
+    opf_path, tree, manifest, ns = load_opf()
+    content_dir = opf_path.parent
+
+    purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest)
+    if GLOBAL_VERBOSE:
+        print("Performing reference analysis...")
+    remove_unreferenced(manifest, tree, ns, extract_dir, content_dir)
+    remove_unreferenced_fonts(extract_dir, manifest, content_dir)
+
+    GLOBAL_KEEP_FILES = set(manifest.keys())
+    if GLOBAL_VERBOSE:
+        print(f"Found {len(GLOBAL_KEEP_FILES)} files to preserve after reference analysis.")
+        
     # If out_path is not provided, generate based on quality
     if out_path is None:
         if quality == 100:
-            out_path = epub_path.with_stem(epub_path.stem + "-lossless")
+            out_path = GLOBAL_INPUT_FILE.with_stem(GLOBAL_INPUT_FILE.stem + "-lossless")
         else:
-            out_path = epub_path.with_stem(f"{epub_path.stem}-q{quality}")
+            out_path = GLOBAL_INPUT_FILE.with_stem(f"{GLOBAL_INPUT_FILE.stem}-q{quality}")
     
     # Load and process OPF file
-    opf_path, tree, manifest, ns = load_opf(extract_dir)
-    
-    # Compute content directory (directory containing the OPF file)
-    content_dir = extract_dir / GLOBAL_CONTENT_DIR
-    
+    opf_path, tree, manifest, ns = load_opf()
+        
     # Use the pre-computed list to skip reference analysis
-    if verbose:
+    if GLOBAL_VERBOSE:
         print(f"Using pre-computed list of {len(GLOBAL_KEEP_FILES)} files to preserve.")
     
     # Remove files not in the keep_files list
@@ -825,14 +826,14 @@ def process_epub(epub_path, quality, out_path, verbose=False):
                     parent.remove(child)
                     break
     
-    if verbose and to_remove:
+    if GLOBAL_VERBOSE and to_remove:
         print(f"Removed {len(to_remove)} files not in the keep list.")
     
     # Save the cleaned tree to opf file
     tree.write(opf_path, encoding="utf-8", xml_declaration=True)
     
     # Compress images with the specified quality
-    compress_images(extract_dir, quality, verbose)
+    compress_images(extract_dir, quality)
     
     # Rebuild the EPUB
     rebuild_epub(extract_dir, out_path)
@@ -842,20 +843,19 @@ def process_epub(epub_path, quality, out_path, verbose=False):
 
 
 def main():
+    global GLOBAL_INPUT_FILE, GLOBAL_VERBOSE
     verify_compressors_availability()
     args = parse_args()
-    input_file = args.epub
-    original_size = input_file.stat().st_size
+    GLOBAL_INPUT_FILE = args.epub
+    GLOBAL_VERBOSE = args.verbose
+    original_size = GLOBAL_INPUT_FILE.stat().st_size
     print("Original size:", human(original_size))
-
-    analyze_epub(input_file, args.purge, args.verbose)
     
     # First attempt with initial quality
     extract_dir, final, out_path = process_epub(
-        input_file,
         quality=args.quality, 
-        out_path=args.output,  # Use user specified output if provided, otherwise None
-        verbose=args.verbose
+        out_path=args.output,
+        purge_patterns=args.purge
     )
     
     # Store initial quality
@@ -876,10 +876,8 @@ def main():
             
             # Process the EPUB with new quality setting, reusing the keep_files list
             extract_dir, final, out_path = process_epub(
-                input_file,
                 quality=q, 
-                out_path=args.output,  # Use user specified output if provided, otherwise None
-                verbose=args.verbose
+                out_path=args.output
             )
             print(f"Quality {q}: {human(final)}")
     
