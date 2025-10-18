@@ -338,12 +338,13 @@ def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifes
         "com.apple.ibooks.display-options.xml",
     ]
     all_patterns = DEFAULT_PURGES + (purge_patterns or [])
-    for href in list(manifest.keys()):
-        if any(fnmatch(href, pat) for pat in all_patterns):
-            remove_from_spine(tree, href)
-            remove_from_manifest(tree, href)
-            remove_file(extract_dir, content_dir, href)
-            print(f"Removed file: {href} from spine, manifest, and disk")
+    for relative_filename in list(manifest.keys()):
+        filename = os.path.basename(relative_filename)
+        if any(fnmatch(filename, pat) for pat in all_patterns):
+            remove_from_spine(tree, relative_filename)
+            remove_from_manifest(tree, relative_filename)
+            remove_file(content_dir, relative_filename)
+            print(f"Removed file: {relative_filename} from spine, manifest, and disk")
 
 def remove_from_spine(tree, href):
     global GLOBAL_VERBOSE
@@ -388,7 +389,7 @@ def remove_from_manifest(tree, href):
     except Exception as e:
         print(f"Warning: Could not remove {href} from manifest: {e}")
 
-def remove_file(extract_dir,content_dir, href):
+def remove_file(content_dir, href):
     """Remove a file from the content directory."""
     # Use content_dir if available, otherwise fall back to extract_dir
     # if content_dir:
@@ -396,12 +397,17 @@ def remove_file(extract_dir,content_dir, href):
     # else:
     #     (extract_dir / href).unlink(missing_ok=True)
 
+    file_path = content_dir / href
+    if not file_path.exists():
+        error_message = f"File not found, could not remove: {href}"
+        print(error_message)
+        raise FileNotFoundError(error_message)
+    
     try:
-        file_path = content_dir / href
-        if file_path.exists():
-            file_path.unlink()
+        file_path.unlink()
     except Exception as e:
         print(f"Warning: Could not remove {href}: {e}")
+        raise
 
 
 def css_referenced_fonts(root):
