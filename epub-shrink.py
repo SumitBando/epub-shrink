@@ -284,7 +284,7 @@ def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifes
             remove_from_spine(tree, relative_filename)
             remove_from_manifest(tree, relative_filename)
             remove_file(content_dir, relative_filename)
-            print(f"Removed file: {relative_filename} from spine, manifest, and disk")
+            print(f"Purged unwanted file: {relative_filename} from spine, manifest, and disk")
 
 def remove_from_spine(tree, href):
     global GLOBAL_VERBOSE
@@ -675,34 +675,7 @@ def process_epub(quality, out_path, purge_patterns):
             out_path = GLOBAL_INPUT_FILE.with_stem(GLOBAL_INPUT_FILE.stem + "-lossless")
         else:
             out_path = GLOBAL_INPUT_FILE.with_stem(f"{GLOBAL_INPUT_FILE.stem}-q{quality}")
-    
-    # Load and process OPF file
-    opf_path, tree, manifest, ns = load_opf()
-        
-    # Use the pre-computed list to skip reference analysis
-    if GLOBAL_VERBOSE:
-        print(f"Using pre-computed list of {len(GLOBAL_KEEP_FILES)} files to preserve.")
-    
-    # Remove files not in the keep_files list
-    to_remove = []
-    for href, node in list(manifest.items()):
-        if href not in GLOBAL_KEEP_FILES:
-            to_remove.append(href)
-            file_path = content_dir / href # Corrected path
-            if file_path.exists():
-                file_path.unlink()
-            # Use standard library approach for removing nodes
-            parent = tree.getroot()
-            for child in list(parent):
-                if child == node:
-                    parent.remove(child)
-                    break
-    
-    if GLOBAL_VERBOSE and to_remove:
-        print(f"Removed {len(to_remove)} files not in the keep list:")
-        for href in to_remove:
-            print(f"  - {href}")
-    
+   
     # Save the cleaned tree to opf file
     tree.write(opf_path, encoding="utf-8", xml_declaration=True)
     
@@ -755,7 +728,7 @@ def main():
             )
             print(f"Quality {q}: {human(final)}")
     
-    print(f"Final:   {human(final)}  (saved {(original_size - final) / original_size:.1%})")
+    print(f"Final size: {human(final)} (saved {(original_size - final) / original_size:.1%}) of original {human(original_size)}")
     print(f"Output file: {out_path}")
     shutil.rmtree(extract_dir)
 
