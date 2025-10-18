@@ -311,8 +311,6 @@ def remove_from_spine(tree, href):
         for itemref in list(spine):
             if itemref.get("idref") == item_id:
                 spine.remove(itemref)
-                if GLOBAL_VERBOSE:
-                    print(f"Removed {href} from spine")
                 break
     except Exception as e:
         print(f"Warning: Could not remove {href} from spine: {e}")
