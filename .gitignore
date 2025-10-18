@@ -30,9 +30,7 @@ env/
 # Uncomment the following line if you want to ignore all EPUB files
 # *.epub
 # Or keep specific test files and ignore others
-*.epub
-!DK.epub
-!DK-min.epub
+DK*.epub
 
 # IDE specific files
 .idea/
@@ -43,4 +41,6 @@ env/
 
 # Temporary directory used during processing
 tmp/
+tmp2/
 *-min.epub
+Songs-lossless.epub

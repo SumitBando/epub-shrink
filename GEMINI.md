@@ -20,3 +20,13 @@ The `epub-shrink.py` script is a command-line tool for reducing the file size of
 - `oxipng` command-line tool
 - Python libraries from `requirements.txt`
 
+Use global variables when appropriate.
+Do not copy global variables to locals unnecessarily.
+
+Always verify that your proposed change compiles.
+
+To smoke test, run the script epub-shrink.py with a test file:
+```bash
+source venv/bin/activate && python epub-shrink.py Songs.epub
+```
+Do not attempt to delete the test file.

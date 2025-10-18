@@ -140,186 +140,116 @@ def load_opf():
 
 def remove_unreferenced(manifest, tree, ns, root, content_dir=None):
     global GLOBAL_VERBOSE
-    spine_refs = {item.attrib["idref"] for item in tree.findall(".//opf:itemref", ns)}
-    keep_hrefs = {i.attrib["href"] for i in manifest.values()
-                  if i.attrib["id"] in spine_refs}
-    files_to_keep = set(keep_hrefs)  # Start with all files from the spine
     
-    # Check for guide entries in the OPF file and add them to files_to_keep
+    # 1. Initialize files_to_keep with essential references
+    spine_refs = {item.attrib["idref"] for item in tree.findall(".//opf:itemref", ns)}
+    files_to_keep = {i.attrib["href"] for i in manifest.values() if i.attrib.get("id") in spine_refs}
+
     for reference in tree.findall(".//opf:guide/opf:reference", ns):
         href = reference.get("href")
         if href:
-            # Check if file isn't already in the keep set
-            if href not in files_to_keep:
-                files_to_keep.add(href)
-                if GLOBAL_VERBOSE:
-                    print(f"Adding file from guide: {href} (type: {reference.get('type', 'unknown')})")
-    
-    # First check meta tags with name="cover"
+            files_to_keep.add(href)
+
     cover_id = None
     for meta in tree.findall(".//opf:meta[@name='cover']", ns):
         cover_id = meta.get("content")
         if cover_id:
             break
-    
-    # If cover ID found, find the corresponding item in manifest
     if cover_id:
         for item in tree.findall(".//opf:item", ns):
             if item.get("id") == cover_id:
                 cover_href = item.get("href")
                 if cover_href:
                     files_to_keep.add(cover_href)
-                    if GLOBAL_VERBOSE:
-                        print(f"Preserving cover image from metadata: {cover_href}")
-    
-    # Also check for cover in properties
+
     for item in tree.findall(".//opf:item[@properties]", ns):
-        properties = item.get("properties", "").split()
-        if "cover-image" in properties:
+        if "cover-image" in item.get("properties", "").split():
             cover_href = item.get("href")
             if cover_href:
                 files_to_keep.add(cover_href)
-                if GLOBAL_VERBOSE:
-                    print(f"Preserving cover image from properties: {cover_href}")
-    
 
-    # Essential file types that should never be removed
-    essential_patterns = [
-        "*.ncx",                      # Navigation Control file for XML
-        "nav.xhtml",                   # Common navigation file
-        "*[Cc]ontents*",                 # Table of contents
-        "*logo*",                        # Logo images
-        "META-INF/*",                    # Package metadata
-    ]
-    # First pass - identify essential files
-    for href, node in list(manifest.items()):
+    essential_patterns = ["*.ncx", "nav.xhtml", "*[Cc]ontents*", "*logo*", "META-INF/*"]
+    for href in manifest:
         if any(fnmatch(href, pat) for pat in essential_patterns):
             files_to_keep.add(href)
-            if GLOBAL_VERBOSE:
-                print(f"Preserving essential file: {href}")
-    
-    # Second pass - find all referenced files from XHTML files
-    all_xhtml_files = [root / href for href in keep_hrefs]
-    
-    # Track all references we've found
-    referenced_files = set()
-    
-    # Extensions to look for in content
-    font_extensions = ('.ttf', '.otf', '.woff', '.woff2')
 
-    # Scan all XHTML files for references
-    for file in all_xhtml_files:
-        if file.exists():
-            try:
-                with open(file, 'r', encoding='utf-8') as f:
-                    soup = BeautifulSoup(f, 'lxml')
-                    file_dir = file.parent
-
-                    for attribute in ['href', 'src']:
-                        for tag in soup.find_all(attrs={attribute: True}):
-                            ref = tag[attribute]
-                            if ref:
-                                referenced_files.add(ref)
-                                referenced_files.add(os.path.basename(ref))
-                                if not ref.startswith('/') and not ref.startswith('http'):
-                                    rel_path = os.path.normpath(str(file_dir / ref))
-                                    rel_path_to_root = os.path.relpath(rel_path, str(root))
-                                    referenced_files.add(rel_path_to_root)
-            except Exception as e:
-                if GLOBAL_VERBOSE:
-                    print(f"Error processing {file}: {e}")
-
-    # Process all CSS files to find font references
-    css_files = []
+    # 2. Iteratively find all references by scanning files
+    # Start scanning with all XHTML files, not just the spine
+    files_to_scan = [href for href, item in manifest.items() if item.attrib.get("media-type") == "application/xhtml+xml"]
     
-    # Only collect CSS files that are referenced in HTML
-    for href in list(manifest.keys()):
-        if href.lower().endswith('.css'):
-            # Only include CSS files that are referenced in HTML
-            if href in referenced_files or os.path.basename(href) in referenced_files:
-                css_path = root / href
-                if css_path.exists():
-                    css_files.append(css_path)
-                    if GLOBAL_VERBOSE:
-                        print(f"Keeping referenced CSS file: {href}")
-            else:
-                print(f"Dropping unreferenced CSS file: {href}")
-    
-    # Find font files and imports referenced in CSS
-    font_urls = set()
-    for css_file in css_files:
+    processed_scans = set()
+
+    while files_to_scan:
+        href = files_to_scan.pop(0)
+        if href in processed_scans:
+            continue
+        processed_scans.add(href)
+        files_to_keep.add(href)
+
+        file_path = content_dir / href
+        if not file_path.exists():
+            continue
+
+        file_dir = file_path.parent
+        
         try:
-            content = css_file.read_text(encoding='utf-8', errors='ignore')
-            rules = tinycss2.parse_stylesheet(content, skip_comments=True, skip_whitespace=True)
+            content = file_path.read_text(encoding='utf-8', errors='ignore')
             
-            for rule in rules:
-                if rule.type == 'at-rule' and rule.at_keyword == 'import':
-                    for token in rule.prelude:
-                        if token.type == 'string' or token.type == 'url':
-                            url = token.value
-                            referenced_files.add(url)
-                            referenced_files.add(os.path.basename(url))
-                            if not url.startswith('/') and not url.startswith('http'):
-                                rel_path = str(css_file.parent / url)
-                                rel_path_to_root = os.path.relpath(rel_path, str(root))
-                                referenced_files.add(rel_path_to_root)
-                                if GLOBAL_VERBOSE:
-                                    print(f"Found @import reference: {rel_path_to_root} in {css_file}")
-                elif rule.type == 'qualified-rule':
-                    for token in rule.content:
-                        if token.type == 'url':
-                            url = token.value
-                            referenced_files.add(url)
-                            referenced_files.add(os.path.basename(url))
-                            if any(url.lower().endswith(ext) for ext in font_extensions):
-                                font_urls.add(url)
-                                font_urls.add(os.path.basename(url))
-
-                            if not url.startswith('/') and not url.startswith('http'):
-                                rel_path = str(css_file.parent / url)
-                                rel_path_to_root = os.path.relpath(rel_path, str(root))
-                                referenced_files.add(rel_path_to_root)
-                                if GLOBAL_VERBOSE and any(url.lower().endswith(ext) for ext in font_extensions):
-                                    print(f"Found font reference: {rel_path_to_root} in {css_file}")
+            # Scan XHTML for href/src attributes
+            if href.lower().endswith(('.xhtml', '.html')):
+                soup = BeautifulSoup(content, 'xml')
+                for attribute in ['href', 'src']:
+                    for tag in soup.find_all(attrs={attribute: True}):
+                        ref = tag[attribute]
+                        if ref and not ref.startswith(('http', 'data')):
+                            abs_path = os.path.normpath(os.path.join(file_dir, ref))
+                            content_relative_path = os.path.relpath(abs_path, content_dir)
+                            if content_relative_path in manifest and content_relative_path not in processed_scans:
+                                files_to_scan.append(content_relative_path)
+            
+            # Scan CSS for @import and url()
+            if href.lower().endswith('.css'):
+                rules = tinycss2.parse_stylesheet(content, skip_comments=True, skip_whitespace=True)
+                for rule in rules:
+                    # Handle @import
+                    if rule.type == 'at-rule' and rule.at_keyword == 'import':
+                        for token in rule.prelude:
+                            if token.type in ('string', 'url'):
+                                ref = token.value
+                                if ref and not ref.startswith('http'):
+                                    abs_path = os.path.normpath(os.path.join(file_dir, ref))
+                                    content_relative_path = os.path.relpath(abs_path, content_dir)
+                                    if content_relative_path in manifest and content_relative_path not in processed_scans:
+                                        files_to_scan.append(content_relative_path)
+                    # Handle url() in properties
+                    elif rule.type == 'qualified-rule':
+                        for token in rule.content:
+                            if token.type == 'url':
+                                ref = token.value
+                                if ref and not ref.startswith(('http', 'data')):
+                                    abs_path = os.path.normpath(os.path.join(file_dir, ref))
+                                    content_relative_path = os.path.relpath(abs_path, content_dir)
+                                    if content_relative_path in manifest and content_relative_path not in processed_scans:
+                                        files_to_scan.append(content_relative_path)
 
         except Exception as e:
             if GLOBAL_VERBOSE:
-                print(f"Error scanning CSS file {css_file}: {e}")
-    
-    # Now check if any file in the manifest is referenced
-    for href in list(manifest.keys()):
-        filename = os.path.basename(href)
-        
-        # Check for direct reference
-        if href in referenced_files or filename in referenced_files:
-            files_to_keep.add(href)
-            if GLOBAL_VERBOSE:
-                print(f"Found reference to: {href}")
-        
-        # Special handling for fonts - check against font URLs
-        if any(href.lower().endswith(ext) for ext in font_extensions):
-            if href in font_urls or filename in font_urls:
-                files_to_keep.add(href)
-                if GLOBAL_VERBOSE:
-                    print(f"Found font reference: {href}")
-    
-    # Now remove files that are not in files_to_keep
+                print(f"Error scanning file {href}: {e}")
+
+    # 3. Remove files that are not in our final keep list
     for href, node in list(manifest.items()):
         if href not in files_to_keep:
-            file_path = root / href
+            file_path = content_dir / href
             if file_path.exists():
                 file_path.unlink()
-                if GLOBAL_VERBOSE:
-                    print(f"Successfully removed file from disk: {href}")
-            else:
-                if GLOBAL_VERBOSE:
-                    print(f"File to remove did not exist on disk: {href}")
-            # Use standard library approach for removing nodes
-            parent = tree.getroot()
-            for child in list(parent):
-                if child == node:
-                    parent.remove(child)
-                    break
+            
+            # Remove from XML manifest
+            parent_map = {c: p for p in tree.iter() for c in p}
+            parent = parent_map.get(node)
+            if parent is not None:
+                parent.remove(node)
+
+            print(f"Dropping unreferenced file: {href}")
 
 
 def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest):
@@ -794,6 +724,10 @@ def process_epub(quality, out_path, purge_patterns):
     content_dir = opf_path.parent
 
     purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest)
+    
+    # After purging, the manifest in the tree is modified, so we need to update our dictionary
+    manifest = {item.attrib["href"]: item for item in tree.findall(".//opf:item", ns)}
+
     if GLOBAL_VERBOSE:
         print("Performing reference analysis...")
     remove_unreferenced(manifest, tree, ns, extract_dir, content_dir)
@@ -822,7 +756,7 @@ def process_epub(quality, out_path, purge_patterns):
     for href, node in list(manifest.items()):
         if href not in GLOBAL_KEEP_FILES:
             to_remove.append(href)
-            file_path = extract_dir / href
+            file_path = content_dir / href # Corrected path
             if file_path.exists():
                 file_path.unlink()
             # Use standard library approach for removing nodes
@@ -833,7 +767,9 @@ def process_epub(quality, out_path, purge_patterns):
                     break
     
     if GLOBAL_VERBOSE and to_remove:
-        print(f"Removed {len(to_remove)} files not in the keep list.")
+        print(f"Removed {len(to_remove)} files not in the keep list:")
+        for href in to_remove:
+            print(f"  - {href}")
     
     # Save the cleaned tree to opf file
     tree.write(opf_path, encoding="utf-8", xml_declaration=True)
