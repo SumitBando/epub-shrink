@@ -1,9 +1,11 @@
-1. The cover image has an id != "cover". Renaming to work around bug in Nook Color
+- remove non-linear items from the spine if there are truly no references to them from any linear items, navigation, or the table of contents
+
+- The cover image has an id != "cover". Renaming to work around bug in Nook Color
 
 Explanation https://www.perplexity.ai/search/explain-the-powershell-script-DfzSO_cRQbam2gU8d6Xuew
 
 
-2. The <guide> element was the primary suspect because it is a legacy feature from the older EPUB 2 standard that is deprecated in EPUB
+- The <guide> element was the primary suspect because it is a legacy feature from the older EPUB 2 standard that is deprecated in EPUB
   3.
 
   Here's the breakdown:
@@ -27,4 +29,4 @@ Explanation https://www.perplexity.ai/search/explain-the-powershell-script-DfzSO
   Removing the <guide> section eliminated this conflict, forcing the reader to use the modern, unambiguous EPUB 3 method to identify
   the cover image.
 
-3. Check repo https://github.com/martinus/epuboptim
+- Check repo https://github.com/martinus/epuboptim
