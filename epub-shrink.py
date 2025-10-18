@@ -207,7 +207,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None):
                             if content_relative_path in manifest and content_relative_path not in processed_scans:
                                 files_to_scan.append(content_relative_path)
             
-            # Scan CSS for @import and url()
+            # Scan CSS for @import, url(), and @font-face
             if href.lower().endswith('.css'):
                 rules = tinycss2.parse_stylesheet(content, skip_comments=True, skip_whitespace=True)
                 for rule in rules:
@@ -223,6 +223,16 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None):
                                         files_to_scan.append(content_relative_path)
                     # Handle url() in properties
                     elif rule.type == 'qualified-rule':
+                        for token in rule.content:
+                            if token.type == 'url':
+                                ref = token.value
+                                if ref and not ref.startswith(('http', 'data')):
+                                    abs_path = os.path.normpath(os.path.join(file_dir, ref))
+                                    content_relative_path = os.path.relpath(abs_path, content_dir)
+                                    if content_relative_path in manifest and content_relative_path not in processed_scans:
+                                        files_to_scan.append(content_relative_path)
+                    # Handle @font-face
+                    elif rule.type == 'at-rule' and rule.at_keyword == 'font-face':
                         for token in rule.content:
                             if token.type == 'url':
                                 ref = token.value
@@ -338,81 +348,6 @@ def remove_file(content_dir, href):
     except Exception as e:
         print(f"Warning: Could not remove {href}: {e}")
         raise
-
-
-def css_referenced_fonts(root):
-    css_files = list(root.rglob("*.css"))
-    font_refs = set()
-    font_basenames = set()
-    for css in css_files:
-        content = css.read_text(errors="ignore")
-        rules = tinycss2.parse_stylesheet(content, skip_comments=True, skip_whitespace=True)
-        for rule in rules:
-            if rule.type == 'qualified-rule':
-                for token in rule.content:
-                    if token.type == 'url':
-                        href = token.value
-                        if href.lower().endswith((".ttf", ".otf", ".woff", ".woff2")):
-                            # Store both the resolved path and the basename
-                            font_refs.add((css.parent / href).resolve())
-                            font_basenames.add(os.path.basename(href))
-    
-    # Also find all actual font files in the EPUB
-    all_fonts = set()
-    for ext in (".ttf", ".otf", ".woff", ".woff2"):
-        for font_path in root.rglob(f"*{ext}"):
-            all_fonts.add(font_path.resolve())
-            
-    # If we have basenames of fonts referenced in CSS but couldn't resolve them,
-    # try to find matching files by basename
-    for font_basename in font_basenames:
-        for font_path in all_fonts:
-            if font_path.name.lower() == font_basename.lower():
-                font_refs.add(font_path)
-    
-    return font_refs
-
-def remove_unreferenced_fonts(root, manifest, content_dir=None):
-    global GLOBAL_VERBOSE
-    referenced = css_referenced_fonts(root)
-    if GLOBAL_VERBOSE:
-        print("Referenced fonts:", *[str(f.relative_to(root)) for f in referenced], sep="\n  ")
-    
-    removed = []
-    preserved = []
-    for href in list(manifest.keys()):
-        if href.lower().endswith((".ttf", ".otf", ".woff", ".woff2")):
-            font_path = (root / href).resolve()
-            font_basename = os.path.basename(href)
-            
-            # Check if this font is referenced by its path or basename
-            is_referenced = False
-            
-            # Check by full path
-            if font_path in referenced:
-                is_referenced = True
-            
-            # Check if any referenced font has the same basename
-            if not is_referenced:
-                for ref in referenced:
-                    if ref.name.lower() == font_basename.lower():
-                        is_referenced = True
-                        break
-            
-            if not is_referenced:
-                removed.append(href)
-                (root / href).unlink(missing_ok=True)
-                del manifest[href]
-            else:
-                preserved.append(href)
-    
-    if GLOBAL_VERBOSE:
-        if preserved:
-            print("Preserved fonts:", *preserved, sep="\n  ")
-        if removed:
-            print("Fonts not referenced by CSS:", *removed, sep="\n  ")
-    
-    return removed
 
 
 def compress_image(path: pathlib.Path, quality: int):
@@ -731,7 +666,6 @@ def process_epub(quality, out_path, purge_patterns):
     if GLOBAL_VERBOSE:
         print("Performing reference analysis...")
     remove_unreferenced(manifest, tree, ns, extract_dir, content_dir)
-    remove_unreferenced_fonts(extract_dir, manifest, content_dir)
 
     GLOBAL_KEEP_FILES = set(manifest.keys())
     if GLOBAL_VERBOSE:
