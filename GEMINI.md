@@ -25,8 +25,18 @@ Do not copy global variables to locals unnecessarily.
 
 Always verify that your proposed change compiles.
 
+# Testing
 To smoke test, run the script epub-shrink.py with a test file:
 ```bash
 source venv/bin/activate && python epub-shrink.py Songs.epub
 ```
+Running on Songs.epub, following files should be dropped:
+- ../promo.css
+- ../xpromo.xhtml
+- ../xpromo.css
+- Literata-Regular.ttf
+- 1724456391785279984_img44.jpg
+
+The font file Bookerly.ttf should not be dropped, as it is referened via the style file 0.css.
+
 Do not attempt to delete the test file.
