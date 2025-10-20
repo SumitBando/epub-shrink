@@ -250,8 +250,12 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None):
     for href, node in list(manifest.items()):
         if href not in files_to_keep:
             file_path = content_dir / href
-            if file_path.exists():
-                file_path.unlink()
+            if not file_path.exists():
+                if GLOBAL_VERBOSE:
+                    print(f"File to remove not found on disk: {href}")
+                continue
+            size = file_path.stat().st_size
+            file_path.unlink()
             
             # Remove from XML manifest
             parent_map = {c: p for p in tree.iter() for c in p}
@@ -259,7 +263,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None):
             if parent is not None:
                 parent.remove(node)
 
-            print(f"Dropping unreferenced file: {href}")
+            print(f"Dropping unreferenced file: {href} ({human(size)})")
 
 
 def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest):
