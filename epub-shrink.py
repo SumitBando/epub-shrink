@@ -728,7 +728,8 @@ def main():
             # Process the EPUB with new quality setting, reusing the keep_files list
             extract_dir, final, out_path = process_epub(
                 quality=q, 
-                out_path=args.output
+                out_path=args.output,
+                purge_patterns=args.purge
             )
             print(f"Quality {q}: {human(final)}")
     
