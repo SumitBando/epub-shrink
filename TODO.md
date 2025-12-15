@@ -1,3 +1,8 @@
+- Check https://github.com/karpathy/reader3/blob/master/reader3.py
+- BUG css background images are getting purged 
+- BUG when purging an item like         "SS_recommendpage*", remove from nav
+- remove Z-library from file name
+
 - remove non-linear items from the spine if there are truly no references to them from any linear items, navigation, or the table of contents
 
 - The cover image has an id != "cover". Renaming to work around bug in Nook Color
