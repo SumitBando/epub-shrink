@@ -273,6 +273,8 @@ def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifes
     DEFAULT_PURGES = [
         "*.DS_Store",
         "*.epubcheck*",
+        "SS_recommendpage*",
+        "_signup_*",
         "*cross-sale*",
         "*cross-sell*",
         "*xpromo*",
