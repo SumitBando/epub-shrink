@@ -138,7 +138,7 @@ def load_opf():
 
 
 
-def remove_unreferenced(manifest, tree, ns, root, content_dir=None):
+def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary=True):
     global GLOBAL_VERBOSE
     
     # 1. Initialize files_to_keep with essential references
@@ -263,12 +263,13 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None):
             if parent is not None:
                 parent.remove(node)
 
-            print(f"Dropping unreferenced file: {href} ({human(size)})")
+            if show_summary:
+                print(f"Dropping unreferenced file: {href} ({human(size)})")
 
 
-def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest):
+def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest, show_summary=True):
     global GLOBAL_VERBOSE
-    if GLOBAL_VERBOSE:
+    if GLOBAL_VERBOSE and show_summary:
         print("Purging unwanted files...")
     DEFAULT_PURGES = [
         "*.DS_Store",
@@ -290,7 +291,8 @@ def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifes
             remove_from_spine(tree, relative_filename)
             remove_from_manifest(tree, relative_filename)
             remove_file(content_dir, relative_filename)
-            print(f"Purged unwanted file: {relative_filename} from spine, manifest, and disk")
+            if show_summary:
+                print(f"Purged unwanted file: {relative_filename} from spine, manifest, and disk")
 
 def remove_from_spine(tree, href):
     global GLOBAL_VERBOSE
@@ -387,7 +389,7 @@ def compress_image(path: pathlib.Path, quality: int):
     return before, path.stat().st_size
 
 
-def compress_images(root, quality):
+def compress_images(root, quality, show_summary=True):
     global GLOBAL_VERBOSE
     # Find all image paths
     jpg_paths = [*root.rglob("*.jpg"), *root.rglob("*.jpeg")]
@@ -395,7 +397,8 @@ def compress_images(root, quality):
     webp_paths = list(root.rglob("*.webp"))
     
     # Print summary of found images
-    print(f"Found {len(jpg_paths)} JPEG files, {len(png_paths)} PNG files, and {len(webp_paths)} WebP files")
+    if show_summary:
+        print(f"Found {len(jpg_paths)} JPEG files, {len(png_paths)} PNG files, and {len(webp_paths)} WebP files")
     
     savings = []
     
@@ -653,7 +656,7 @@ def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
 def analyze_epub(purge_patterns):
     pass
 
-def process_epub(quality, out_path, purge_patterns):
+def process_epub(quality, out_path, purge_patterns, show_summary=True):
     """Process an EPUB file with the given quality setting."""
 
     global GLOBAL_KEEP_FILES, GLOBAL_INPUT_FILE, GLOBAL_VERBOSE
@@ -662,17 +665,17 @@ def process_epub(quality, out_path, purge_patterns):
     opf_path, tree, manifest, ns = load_opf()
     content_dir = opf_path.parent
 
-    purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest)
+    purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest, show_summary=show_summary)
     
     # After purging, the manifest in the tree is modified, so we need to update our dictionary
     manifest = {item.attrib["href"]: item for item in tree.findall(".//opf:item", ns)}
 
-    if GLOBAL_VERBOSE:
+    if GLOBAL_VERBOSE and show_summary:
         print("Performing reference analysis...")
-    remove_unreferenced(manifest, tree, ns, extract_dir, content_dir)
+    remove_unreferenced(manifest, tree, ns, extract_dir, content_dir, show_summary=show_summary)
 
     GLOBAL_KEEP_FILES = set(manifest.keys())
-    if GLOBAL_VERBOSE:
+    if GLOBAL_VERBOSE and show_summary:
         print(f"Found {len(GLOBAL_KEEP_FILES)} files to preserve after reference analysis.")
         
     # If out_path is not provided, generate based on quality
@@ -686,7 +689,7 @@ def process_epub(quality, out_path, purge_patterns):
     tree.write(opf_path, encoding="utf-8", xml_declaration=True)
     
     # Compress images with the specified quality
-    compress_images(extract_dir, quality)
+    compress_images(extract_dir, quality, show_summary=show_summary)
     
     # Rebuild the EPUB
     rebuild_epub(extract_dir, out_path)
@@ -708,7 +711,8 @@ def main():
     extract_dir, final, out_path = process_epub(
         quality=args.quality, 
         out_path=args.output,
-        purge_patterns=args.purge
+        purge_patterns=args.purge,
+        show_summary=True
     )
     
     # Store initial quality
@@ -731,7 +735,8 @@ def main():
             extract_dir, final, out_path = process_epub(
                 quality=q, 
                 out_path=args.output,
-                purge_patterns=args.purge
+                purge_patterns=args.purge,
+                show_summary=False
             )
             print(f"Quality {q}: {human(final)}")
     

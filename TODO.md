@@ -1,3 +1,8 @@
+- [x] when iteratively compressing images in a file, dont show file statistics every iteration, show it only on first inspection,
+  e.g. avoid showing multiple times: Found 225 JPEG files, 43 PNG files, and 0 WebP files
+
+- when compressing to a target size, instead of compressing images by 5% more every time, use the initial size against the target size to guess required compression. E.g. if the original is more than 2x the target, start at 80% quality; if output turns out to be still more than 2x, then try next at 60% quality. However, if the previous output was within 100% excess, try reducing by 10% steps. If the previous failed was within 50%, try reducing quality by another 5%. E.g. a sequence may be q80, q60, q50, q40, q35. 
+
 - Check https://github.com/karpathy/reader3/blob/master/reader3.py
 - BUG css background images are getting purged 
 - BUG when purging an item like         "SS_recommendpage*", remove from nav
@@ -7,7 +12,7 @@
 
 - The cover image has an id != "cover". Renaming to work around bug in Nook Color
 
-Explanation https://www.perplexity.ai/search/explain-the-powershell-script-DfzSO_cRQbam2gU8d6Xuew
+- Explanation https://www.perplexity.ai/search/explain-the-powershell-script-DfzSO_cRQbam2gU8d6Xuew
 
 
 - The <guide> element was the primary suspect because it is a legacy feature from the older EPUB 2 standard that is deprecated in EPUB
