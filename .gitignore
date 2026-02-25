@@ -42,5 +42,4 @@ DK*.epub
 # Temporary directory used during processing
 tmp/
 tmp2/
-*-min.epub
-Songs-lossless.epub
+*.epub
