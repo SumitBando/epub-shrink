@@ -1,5 +1,3 @@
-- when showing image count summary, also display size per type, e.g JPEG: 24 files / 20MB, PNG: 5 files / 100KB
-
 - improve oxipng invocation
   oxipng_args = [
       "oxipng", 
@@ -50,6 +48,12 @@
   the cover image.
 
 - Check repo https://github.com/martinus/epuboptim
+
+# Completed tasks
+- [x] when showing image count summary, also display size per type, e.g. change
+  Found 4 JPEG files, 0 PNG files, and 0 WebP files
+  to
+  Found 4 JPEG / 20MB, 1 PNG / 145KB and 0 WebP files
 
 
 - [x] when iteratively compressing images in a file, dont show file statistics every iteration, show it only on first inspection,

@@ -41,3 +41,5 @@ Running on tests/Songs.epub, following files should be dropped:
 The font file Bookerly.ttf should not be dropped, as it is referened via the style file 0.css.
 
 Do not attempt to delete the test file.
+
+After task is completed in TODO.md, mark it and move to the top of completed section

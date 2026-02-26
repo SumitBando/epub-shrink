@@ -396,7 +396,14 @@ def analyze_images(root, show_summary=True):
     webp_paths = [p.relative_to(root) for p in root.rglob("*.webp")]
     
     if show_summary:
-        print(f"Found {len(jpg_paths)} JPEG files, {len(png_paths)} PNG files, and {len(webp_paths)} WebP files")
+        def fmt(paths, name):
+            count = len(paths)
+            if count == 0:
+                return f"0 {name} files"
+            size = sum((root / p).stat().st_size for p in paths)
+            return f"{count} {name} / {human(size)}"
+
+        print(f"Found {fmt(jpg_paths, 'JPEG')}, {fmt(png_paths, 'PNG')} and {fmt(webp_paths, 'WebP')}")
     
     return jpg_paths, png_paths, webp_paths
 
