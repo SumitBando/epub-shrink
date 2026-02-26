@@ -38,8 +38,12 @@ Running on tests/Songs.epub, following files should be dropped:
 - Literata-Regular.ttf
 - 1724456391785279984_img44.jpg
 
-The font file Bookerly.ttf should not be dropped, as it is referened via the style file 0.css.
+- Do not delete the test file.
 
-Do not attempt to delete the test file.
+- When working on a task, do not make make assumptions. If the requirement is not clear, ask questions.
 
-After task is completed in TODO.md, mark it and move to the top of list of # Completed tasks. Do not automatically start on pending next task in the list
+- When implementing a task, if there are multiple compelling options, ask
+
+- After task is completed in TODO.md, mark it and move to the top of list of # Completed tasks.
+
+- Do not automatically start on pending next task in the list. Wait for me to accept the current task and chek it in.

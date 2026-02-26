@@ -405,17 +405,43 @@ def analyze_images(root, show_summary=True):
     png_paths = [p.relative_to(root) for p in root.rglob("*.png")]
     webp_paths = [p.relative_to(root) for p in root.rglob("*.webp")]
     
-    if show_summary:
-        def fmt(paths, name):
-            count = len(paths)
-            if count == 0:
-                return f"0 {name} files"
-            size = sum((root / p).stat().st_size for p in paths)
-            return f"{count} {name} / {human(size)}"
-
-        print(f"Found {fmt(jpg_paths, 'JPEG')}, {fmt(png_paths, 'PNG')} and {fmt(webp_paths, 'WebP')}")
+    # Store quality and size per type
+    types = [
+        ("JPEG", jpg_paths),
+        ("PNG", png_paths),
+        ("WebP", webp_paths)
+    ]
     
-    return jpg_paths, png_paths, webp_paths
+    max_estimated_quality = 0
+    type_summaries = []
+    
+    for name, paths in types:
+        count = len(paths)
+        if count == 0:
+            type_summaries.append(f"0 {name} files")
+            continue
+            
+        size = 0
+        type_max_q = 0
+        for p in paths:
+            full_path = root / p
+            size += full_path.stat().st_size
+            info = analyze_image_quality(full_path)
+            q = info.get("estimated_quality")
+            if q:
+                type_max_q = max(type_max_q, q)
+                max_estimated_quality = max(max_estimated_quality, q)
+        
+        summary = f"{count} {name} / {human(size)}"
+        if type_max_q > 0:
+            summary += f" (max q: {type_max_q})"
+        type_summaries.append(summary)
+
+    if show_summary:
+        summary_line = f"Found {type_summaries[0]}, {type_summaries[1]} and {type_summaries[2]}"
+        print(summary_line)
+    
+    return jpg_paths, png_paths, webp_paths, max_estimated_quality
 
 
 def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
@@ -738,7 +764,7 @@ def main():
     fix(tree, manifest, ns, extract_dir, opf_path, show_summary=True)
 
     # 4. Image Analysis (Discovery and Summary)
-    jpg_paths, png_paths, webp_paths = analyze_images(extract_dir, show_summary=True)
+    jpg_paths, png_paths, webp_paths, max_estimated_quality = analyze_images(extract_dir, show_summary=True)
 
     # 5. Iterative Compression and Rebuild
     q = args.quality

@@ -42,6 +42,7 @@
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] for the images, show the highest of the estimated quality
 - [x] research and improve oxipng invocation, e.g. one suggestion was to change args:
   oxipng_args = [
       "oxipng", 
