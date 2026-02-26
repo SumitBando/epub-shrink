@@ -38,8 +38,6 @@ GLOBAL_KEEP_FILES = None
 GLOBAL_INPUT_FILE = None
 GLOBAL_VERBOSE = False
 
-OXIPNG_ARGS = ["oxipng", "-o", "max", "--strip", "all", "--alpha", "--threads", "4"]
-
 
 def verify_compressors_availability():
     """Check if required image compressors are available."""
@@ -401,38 +399,6 @@ def remove_file(content_dir, href):
         raise
 
 
-def compress_image(path: pathlib.Path, quality: int):
-    global GLOBAL_VERBOSE
-    before = path.stat().st_size
-    try:
-        img = Image.open(path)
-        fmt = img.format
-        if quality == 100:
-            if fmt == "JPEG":
-                cmd = ["jpegoptim", "--strip-all", str(path)]
-                # print(f"Running jpegoptim: {' '.join(cmd)}")
-                subprocess.run(cmd, stdout=subprocess.DEVNULL)
-            elif fmt == "PNG":
-                oxipng_args = OXIPNG_ARGS.copy()
-                if not GLOBAL_VERBOSE:
-                    oxipng_args.append("-q")
-                oxipng_args.append(str(path))
-                subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
-            else:
-                img.save(path, format=fmt, optimize=True)
-        else:
-            if fmt == "JPEG":
-                img.save(path, format="JPEG", quality=quality,
-                         optimize=True, progressive=True)
-            elif fmt == "PNG":
-                img = img.convert("P", palette=Image.ADAPTIVE)
-                img.save(path, format="PNG", optimize=True)
-    except Exception as e:
-        if GLOBAL_VERBOSE:
-            print("Image compress error:", path, e)
-    return before, path.stat().st_size
-
-
 def analyze_images(root, show_summary=True):
     """Find all image paths relative to root and optionally print a summary."""
     jpg_paths = [p.relative_to(root) for p in [*root.rglob("*.jpg"), *root.rglob("*.jpeg")]]
@@ -481,7 +447,7 @@ def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
                     before_data[f] = {'size': f.stat().st_size}
             
             # Run the optimization
-            oxipng_args = OXIPNG_ARGS.copy()
+            oxipng_args = ["oxipng", "-o", "max", "--strip", "all", "--alpha", "--threads", "4"]
             if not GLOBAL_VERBOSE:
                 oxipng_args.append("-q")
             
@@ -561,18 +527,38 @@ def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
     for rel_path in img_rel_paths:
         p = root / rel_path
         # Store analysis data before compression
-        before_size = p.stat().st_size
+        before = p.stat().st_size
         image_info = None
         
         if GLOBAL_VERBOSE:
             image_info = analyze_image_quality(p)
         
         # Compress the image
-        b, a = compress_image(p, quality)
+        try:
+            img = Image.open(p)
+            fmt = img.format
+            if quality == 100:
+                # Lossless fallback for formats other than batch-processed JPEG/PNG (e.g. WebP)
+                img.save(p, format=fmt, optimize=True)
+            else:
+                if fmt == "JPEG":
+                    img.save(p, format="JPEG", quality=quality,
+                             optimize=True, progressive=True)
+                elif fmt == "PNG":
+                    # For lossy PNG, convert to palette-based image
+                    img = img.convert("P", palette=Image.ADAPTIVE)
+                    img.save(p, format="PNG", optimize=True)
+                else:
+                    img.save(p, format=fmt, quality=quality, optimize=True)
+        except Exception as e:
+            if GLOBAL_VERBOSE:
+                print("Image compress error:", p, e)
+        
+        after = p.stat().st_size
         
         if GLOBAL_VERBOSE:
             relative_path = p.relative_to(root)
-            reduction_pct = (b - a) / b * 100 if b > 0 else 0
+            reduction_pct = (before - after) / before * 100 if before > 0 else 0
             
             if image_info and 'error' not in image_info:
                 fmt = image_info['format']
@@ -588,12 +574,12 @@ def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
                     color_type = image_info['png_info'].get('color_type', 'Unknown')
                     output += f" | Type: {color_type}"
                 
-                output += f" | Quality: {quality} | {human(b)} → {human(a)} ({reduction_pct:.1f}% saved)"
+                output += f" | Quality: {quality} | {human(before)} → {human(after)} ({reduction_pct:.1f}% saved)"
                 print(output)
             else:
-                print(f"File: {relative_path} | {human(b)} → {human(a)} ({reduction_pct:.1f}% saved)")
+                print(f"File: {relative_path} | {human(before)} → {human(after)} ({reduction_pct:.1f}% saved)")
         
-        savings.append((b, a))
+        savings.append((before, after))
     
     return savings
 
