@@ -138,6 +138,28 @@ def load_opf():
 
 
 
+def extract_refs(tokens, is_import=False):
+    refs = []
+    for token in tokens:
+        if token.type == 'url':
+            refs.append(token.value)
+        elif token.type == 'function' and token.lower_name == 'url':
+            for arg in token.arguments:
+                if arg.type == 'string':
+                    refs.append(arg.value)
+                    break
+        elif is_import and token.type == 'string':
+            refs.append(token.value)
+        
+        if hasattr(token, 'content') and token.content:
+            refs.extend(extract_refs(token.content))
+        if hasattr(token, 'arguments') and token.arguments:
+            refs.extend(extract_refs(token.arguments))
+        if hasattr(token, 'value') and isinstance(token.value, list):
+            refs.extend(extract_refs(token.value))
+    return refs
+
+
 def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary=True):
     global GLOBAL_VERBOSE
     
@@ -178,6 +200,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
     files_to_scan = [href for href, item in manifest.items() if item.attrib.get("media-type") == "application/xhtml+xml"]
     
     processed_scans = set()
+    scan_count = 0
 
     while files_to_scan:
         href = files_to_scan.pop(0)
@@ -185,6 +208,10 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
             continue
         processed_scans.add(href)
         files_to_keep.add(href)
+        
+        scan_count += 1
+        if scan_count % 50 == 0:
+            print(f"Scanned {scan_count} files...")
 
         file_path = content_dir / href
         if not file_path.exists():
@@ -193,60 +220,77 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
         file_dir = file_path.parent
         
         try:
-            content = file_path.read_text(encoding='utf-8', errors='ignore')
-            
-            # Scan XHTML for href/src attributes
+            # Use binary read and detect encoding if possible, but for performance,
+            # we'll stick to a fast read and specific parsing.
             if href.lower().endswith(('.xhtml', '.html')):
-                soup = BeautifulSoup(content, 'xml')
-                for attribute in ['href', 'src']:
-                    for tag in soup.find_all(attrs={attribute: True}):
-                        ref = tag[attribute]
-                        if ref and not ref.startswith(('http', 'data')):
-                            abs_path = os.path.normpath(os.path.join(file_dir, ref))
-                            content_relative_path = os.path.relpath(abs_path, content_dir)
-                            if content_relative_path in manifest and content_relative_path not in processed_scans:
-                                files_to_scan.append(content_relative_path)
+                content = file_path.read_bytes()
+                soup = BeautifulSoup(content, 'lxml-xml')
+                
+                # Combined search for speed
+                for tag in soup.find_all(True, attrs={'href': True}):
+                    ref = tag.get('href')
+                    if ref and not ref.startswith(('http', 'data', '#', 'mailto:')):
+                        ref = ref.split('#')[0]
+                        abs_path = os.path.normpath(os.path.join(file_dir, ref))
+                        content_relative_path = os.path.relpath(abs_path, content_dir)
+                        if content_relative_path in manifest and content_relative_path not in processed_scans:
+                            files_to_scan.append(content_relative_path)
+
+                for tag in soup.find_all(True, attrs={'src': True}):
+                    ref = tag.get('src')
+                    if ref and not ref.startswith(('http', 'data', '#')):
+                        ref = ref.split('#')[0]
+                        abs_path = os.path.normpath(os.path.join(file_dir, ref))
+                        content_relative_path = os.path.relpath(abs_path, content_dir)
+                        if content_relative_path in manifest and content_relative_path not in processed_scans:
+                            files_to_scan.append(content_relative_path)
+                
+                # Scan style attributes
+                for tag in soup.find_all(True, attrs={'style': True}):
+                    try:
+                        declarations = tinycss2.parse_declaration_list(tag['style'], skip_comments=True, skip_whitespace=True)
+                        for ref in extract_refs(declarations):
+                            if ref and not ref.startswith(('http', 'data', '#')):
+                                ref = ref.split('#')[0]
+                                abs_path = os.path.normpath(os.path.join(file_dir, ref))
+                                content_relative_path = os.path.relpath(abs_path, content_dir)
+                                if content_relative_path in manifest and content_relative_path not in processed_scans:
+                                    files_to_scan.append(content_relative_path)
+                    except Exception:
+                        pass
             
             # Scan CSS for @import, url(), and @font-face
-            if href.lower().endswith('.css'):
-                rules = tinycss2.parse_stylesheet(content, skip_comments=True, skip_whitespace=True)
-                for rule in rules:
-                    # Handle @import
-                    if rule.type == 'at-rule' and rule.at_keyword == 'import':
-                        for token in rule.prelude:
-                            if token.type in ('string', 'url'):
-                                ref = token.value
-                                if ref and not ref.startswith('http'):
-                                    abs_path = os.path.normpath(os.path.join(file_dir, ref))
-                                    content_relative_path = os.path.relpath(abs_path, content_dir)
-                                    if content_relative_path in manifest and content_relative_path not in processed_scans:
-                                        files_to_scan.append(content_relative_path)
-                    # Handle url() in properties
-                    elif rule.type == 'qualified-rule':
-                        for token in rule.content:
-                            if token.type == 'url':
-                                ref = token.value
-                                if ref and not ref.startswith(('http', 'data')):
-                                    abs_path = os.path.normpath(os.path.join(file_dir, ref))
-                                    content_relative_path = os.path.relpath(abs_path, content_dir)
-                                    if content_relative_path in manifest and content_relative_path not in processed_scans:
-                                        files_to_scan.append(content_relative_path)
-                    # Handle @font-face
-                    elif rule.type == 'at-rule' and rule.at_keyword == 'font-face':
-                        for token in rule.content:
-                            if token.type == 'url':
-                                ref = token.value
-                                if ref and not ref.startswith(('http', 'data')):
-                                    abs_path = os.path.normpath(os.path.join(file_dir, ref))
-                                    content_relative_path = os.path.relpath(abs_path, content_dir)
-                                    if content_relative_path in manifest and content_relative_path not in processed_scans:
-                                        files_to_scan.append(content_relative_path)
+            elif href.lower().endswith('.css'):
+                content = file_path.read_text(encoding='utf-8', errors='ignore')
+                try:
+                    rules = tinycss2.parse_stylesheet(content, skip_comments=True, skip_whitespace=True)
+                    for rule in rules:
+                        is_import = (rule.type == 'at-rule' and rule.at_keyword == 'import')
+                        all_refs = []
+                        if hasattr(rule, 'prelude') and rule.prelude:
+                            all_refs.extend(extract_refs(rule.prelude, is_import=is_import))
+                        if hasattr(rule, 'content') and rule.content:
+                            all_refs.extend(extract_refs(rule.content))
+                        
+                        for ref in all_refs:
+                            if ref and not ref.startswith(('http', 'data', '#')):
+                                ref = ref.split('#')[0]
+                                abs_path = os.path.normpath(os.path.join(file_dir, ref))
+                                content_relative_path = os.path.relpath(abs_path, content_dir)
+                                if content_relative_path in manifest and content_relative_path not in processed_scans:
+                                    files_to_scan.append(content_relative_path)
+                except Exception as e:
+                    if GLOBAL_VERBOSE:
+                        print(f"Error parsing CSS {href}: {e}")
 
         except Exception as e:
             if GLOBAL_VERBOSE:
                 print(f"Error scanning file {href}: {e}")
 
     # 3. Remove files that are not in our final keep list
+    # Pre-calculate parent map for efficient node removal
+    parent_map = {c: p for p in tree.iter() for c in p}
+    
     for href, node in list(manifest.items()):
         if href not in files_to_keep:
             file_path = content_dir / href
@@ -258,7 +302,6 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
             file_path.unlink()
             
             # Remove from XML manifest
-            parent_map = {c: p for p in tree.iter() for c in p}
             parent = parent_map.get(node)
             if parent is not None:
                 parent.remove(node)
