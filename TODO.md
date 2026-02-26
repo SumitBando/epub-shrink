@@ -1,12 +1,3 @@
-- improve oxipng invocation
-  oxipng_args = [
-      "oxipng", 
-      "-o", "max", 
-      "--strip", "all", 
-      "--alpha", 
-      "--threads", "4"
-  ]
-
 - when compressing to a target size, instead of compressing images by 5% more every time, use the initial size against the target size to guess required compression. E.g. if the original is more than 2x the target, start at 80% quality; if output turns out to be still more than 2x, then try next at 60% quality. However, if the previous output was within 100% excess, try reducing by 10% steps. If the previous failed was within 50%, try reducing quality by another 5%. E.g. a sequence may be q80, q60, q50, q40, q35. 
 
 - since we are looking at the image statistics and know image estimated quality, it does not make sense to start the compression loop at higher than the existing estimated quality
@@ -51,6 +42,14 @@
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] research and improve oxipng invocation, e.g. one suggestion was to change args:
+  oxipng_args = [
+      "oxipng", 
+      "-o", "max", 
+      "--strip", "all", 
+      "--alpha", 
+      "--threads", "4"
+  ]
 - [x] font files referenced from style should not be purged (also handles quoted url() and background images)
 - [x] when showing image count summary, also display size per type, e.g. change
   Found 4 JPEG files, 0 PNG files, and 0 WebP files

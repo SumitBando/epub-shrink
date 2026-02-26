@@ -38,6 +38,8 @@ GLOBAL_KEEP_FILES = None
 GLOBAL_INPUT_FILE = None
 GLOBAL_VERBOSE = False
 
+OXIPNG_ARGS = ["oxipng", "-o", "max", "--strip", "all", "--alpha", "--threads", "4"]
+
 
 def verify_compressors_availability():
     """Check if required image compressors are available."""
@@ -411,11 +413,10 @@ def compress_image(path: pathlib.Path, quality: int):
                 # print(f"Running jpegoptim: {' '.join(cmd)}")
                 subprocess.run(cmd, stdout=subprocess.DEVNULL)
             elif fmt == "PNG":
-                oxipng_args = ["oxipng", "-o", "4", "--strip", "safe"]
-                # if not GLOBAL_VERBOSE:
-                # oxipng_args.append("-q")
+                oxipng_args = OXIPNG_ARGS.copy()
+                if not GLOBAL_VERBOSE:
+                    oxipng_args.append("-q")
                 oxipng_args.append(str(path))
-                # print(f"Running oxipng: {' '.join(oxipng_args)}")
                 subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
             else:
                 img.save(path, format=fmt, optimize=True)
@@ -480,7 +481,9 @@ def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
                     before_data[f] = {'size': f.stat().st_size}
             
             # Run the optimization
-            oxipng_args = ["oxipng", "-q", "-o", "4", "--strip", "safe"]
+            oxipng_args = OXIPNG_ARGS.copy()
+            if not GLOBAL_VERBOSE:
+                oxipng_args.append("-q")
             
             oxipng_args.extend([str(f) for f in files])
             subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)

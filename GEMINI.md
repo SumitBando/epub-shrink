@@ -42,5 +42,4 @@ The font file Bookerly.ttf should not be dropped, as it is referened via the sty
 
 Do not attempt to delete the test file.
 
-After task is completed in TODO.md, mark it and move to the top of list of # Completed tasks
-Do not automatically start on next task
+After task is completed in TODO.md, mark it and move to the top of list of # Completed tasks. Do not automatically start on pending next task in the list
