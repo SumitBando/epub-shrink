@@ -1,7 +1,17 @@
-- [x] when iteratively compressing images in a file, dont show file statistics every iteration, show it only on first inspection,
-  e.g. avoid showing multiple times: Found 225 JPEG files, 43 PNG files, and 0 WebP files
+- when showing image count summary, also display size per type, e.g JPEG: 24 files / 20MB, PNG: 5 files / 100KB
+
+- improve oxipng invocation
+  oxipng_args = [
+      "oxipng", 
+      "-o", "max", 
+      "--strip", "all", 
+      "--alpha", 
+      "--threads", "4"
+  ]
 
 - when compressing to a target size, instead of compressing images by 5% more every time, use the initial size against the target size to guess required compression. E.g. if the original is more than 2x the target, start at 80% quality; if output turns out to be still more than 2x, then try next at 60% quality. However, if the previous output was within 100% excess, try reducing by 10% steps. If the previous failed was within 50%, try reducing quality by another 5%. E.g. a sequence may be q80, q60, q50, q40, q35. 
+
+- merge rebind.py
 
 - Check https://github.com/karpathy/reader3/blob/master/reader3.py
 - BUG css background images are getting purged 
@@ -40,3 +50,8 @@
   the cover image.
 
 - Check repo https://github.com/martinus/epuboptim
+
+
+- [x] when iteratively compressing images in a file, dont show file statistics every iteration, show it only on first inspection,
+  e.g. avoid showing multiple times: Found 225 JPEG files, 43 PNG files, and 0 WebP files
+

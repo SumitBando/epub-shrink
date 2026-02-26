@@ -8,11 +8,12 @@ The `epub-shrink.py` script is a command-line tool for reducing the file size of
 
 ## Features
 - Input an EPUB file.
-- Specify an output file path.
-- Set image compression quality (0-100).
-- Define a target size in MB for the output file.
+  Generates `book-lossless.epub` or `book-90c.epub` etc alongside the original.
+- Specify an output file path. If not specified uses input directory
+- Set image compression quality (0-100), e.g. -q 80
+- Define a target size in MB for the output file, e.g. -t 99
 - Provide glob patterns for files to be purged.
-- Verbose mode for detailed output.
+- Verbose mode for detailed output, e.g. -v
 
 ## Dependencies
 - Python 3

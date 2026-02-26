@@ -389,24 +389,29 @@ def compress_image(path: pathlib.Path, quality: int):
     return before, path.stat().st_size
 
 
-def compress_images(root, quality, show_summary=True):
-    global GLOBAL_VERBOSE
-    # Find all image paths
-    jpg_paths = [*root.rglob("*.jpg"), *root.rglob("*.jpeg")]
-    png_paths = list(root.rglob("*.png"))
-    webp_paths = list(root.rglob("*.webp"))
+def analyze_images(root, show_summary=True):
+    """Find all image paths relative to root and optionally print a summary."""
+    jpg_paths = [p.relative_to(root) for p in [*root.rglob("*.jpg"), *root.rglob("*.jpeg")]]
+    png_paths = [p.relative_to(root) for p in root.rglob("*.png")]
+    webp_paths = [p.relative_to(root) for p in root.rglob("*.webp")]
     
-    # Print summary of found images
     if show_summary:
         print(f"Found {len(jpg_paths)} JPEG files, {len(png_paths)} PNG files, and {len(webp_paths)} WebP files")
+    
+    return jpg_paths, png_paths, webp_paths
+
+
+def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
+    global GLOBAL_VERBOSE
     
     savings = []
     
     # Process PNG files by directory to optimize oxipng performance
     if png_paths and quality == 100:
         png_dirs = defaultdict(list)
-        for png_path in png_paths:
-            png_dirs[png_path.parent].append(png_path)
+        for rel_path in png_paths:
+            p = root / rel_path
+            png_dirs[p.parent].append(p)
         
         for directory, files in png_dirs.items():
             if GLOBAL_VERBOSE:
@@ -452,8 +457,9 @@ def compress_images(root, quality, show_summary=True):
     # Process JPEG files by directory to optimize jpegoptim performance
     if jpg_paths and quality == 100:        
         jpg_dirs = defaultdict(list)
-        for jpg_path in jpg_paths:
-            jpg_dirs[jpg_path.parent].append(jpg_path)
+        for rel_path in jpg_paths:
+            p = root / rel_path
+            jpg_dirs[p.parent].append(p)
         
         for directory, files in jpg_dirs.items():
             if GLOBAL_VERBOSE:
@@ -497,9 +503,10 @@ def compress_images(root, quality, show_summary=True):
                 savings.append((before, after))
     
     # Handle WebP files and other quality settings for JPEG/PNG
-    img_paths = webp_paths + [p for p in png_paths if quality != 100] + [p for p in jpg_paths if quality != 100]
+    img_rel_paths = webp_paths + [p for p in png_paths if quality != 100] + [p for p in jpg_paths if quality != 100]
     
-    for p in img_paths:
+    for rel_path in img_rel_paths:
+        p = root / rel_path
         # Store analysis data before compression
         before_size = p.stat().st_size
         image_info = None
@@ -653,49 +660,18 @@ def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
             if file.is_file() and file.name != "mimetype":
                 z.write(file, file.relative_to(root), compress_type=zipfile.ZIP_DEFLATED)
 
-def analyze_epub(purge_patterns):
-    pass
-
-def process_epub(quality, out_path, purge_patterns, show_summary=True):
-    """Process an EPUB file with the given quality setting."""
-
-    global GLOBAL_KEEP_FILES, GLOBAL_INPUT_FILE, GLOBAL_VERBOSE
-
+def analyze_file():
+    """Extract EPUB and load metadata."""
     extract_dir = unzip()
     opf_path, tree, manifest, ns = load_opf()
+    return extract_dir, opf_path, tree, manifest, ns
+
+
+def fix(tree, manifest, ns, extract_dir, opf_path, show_summary=True):
+    """Remove unreferenced assets and write the updated OPF."""
     content_dir = opf_path.parent
-
-    purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest, show_summary=show_summary)
-    
-    # After purging, the manifest in the tree is modified, so we need to update our dictionary
-    manifest = {item.attrib["href"]: item for item in tree.findall(".//opf:item", ns)}
-
-    if GLOBAL_VERBOSE and show_summary:
-        print("Performing reference analysis...")
     remove_unreferenced(manifest, tree, ns, extract_dir, content_dir, show_summary=show_summary)
-
-    GLOBAL_KEEP_FILES = set(manifest.keys())
-    if GLOBAL_VERBOSE and show_summary:
-        print(f"Found {len(GLOBAL_KEEP_FILES)} files to preserve after reference analysis.")
-        
-    # If out_path is not provided, generate based on quality
-    if out_path is None:
-        if quality == 100:
-            out_path = GLOBAL_INPUT_FILE.with_stem(GLOBAL_INPUT_FILE.stem + "-lossless")
-        else:
-            out_path = GLOBAL_INPUT_FILE.with_stem(f"{GLOBAL_INPUT_FILE.stem}-q{quality}")
-   
-    # Save the cleaned tree to opf file
     tree.write(opf_path, encoding="utf-8", xml_declaration=True)
-    
-    # Compress images with the specified quality
-    compress_images(extract_dir, quality, show_summary=show_summary)
-    
-    # Rebuild the EPUB
-    rebuild_epub(extract_dir, out_path)
-    final_size = out_path.stat().st_size
-    
-    return extract_dir, final_size, out_path
 
 
 def main():
@@ -706,43 +682,65 @@ def main():
     GLOBAL_VERBOSE = args.verbose
     original_size = GLOBAL_INPUT_FILE.stat().st_size
     print("Original size:", human(original_size))
-    
-    # First attempt with initial quality
-    extract_dir, final, out_path = process_epub(
-        quality=args.quality, 
-        out_path=args.output,
-        purge_patterns=args.purge,
-        show_summary=True
-    )
-    
-    # Store initial quality
-    q = args.quality
 
-    # Check if target size is specified and not met
-    if args.targetsize and final / (1024 * 1024) > args.targetsize and q > 15:
-        print(f"Target {args.targetsize}MB not met, current size {human(final)}")
-        
-        # Try progressively lower qualities until target is met or quality floor is reached
-        while args.targetsize and final / (1024 * 1024) > args.targetsize and q > 15:
-            # Calculate new quality level
-            q = max(q - 5, 15)
-            print(f"Retrying with lossy quality={q}")
-            
-            # Clean up previous temporary directory
-            shutil.rmtree(extract_dir)
-            
-            # Process the EPUB with new quality setting, reusing the keep_files list
-            extract_dir, final, out_path = process_epub(
-                quality=q, 
-                out_path=args.output,
-                purge_patterns=args.purge,
-                show_summary=False
-            )
-            print(f"Quality {q}: {human(final)}")
+    # 1. Analyze and Prepare
+    extract_dir, opf_path, tree, manifest, ns = analyze_file()
+    content_dir = opf_path.parent
+
+    # 2. Purge unwanted patterns
+    purge_unwanted_files(args.purge, extract_dir, content_dir, tree, manifest, show_summary=True)
     
-    print(f"Final size: {human(final)} (saved {(original_size - final) / original_size:.1%}) of original {human(original_size)}")
-    print(f"Output file: {out_path}")
-    shutil.rmtree(extract_dir)
+    # Refresh manifest after purge
+    manifest = {item.attrib["href"]: item for item in tree.findall(".//opf:item", ns)}
+
+    # 3. Fix (Remove unreferenced and update OPF)
+    if GLOBAL_VERBOSE:
+        print("Performing reference analysis...")
+    fix(tree, manifest, ns, extract_dir, opf_path, show_summary=True)
+
+    # 4. Image Analysis (Discovery and Summary)
+    jpg_paths, png_paths, webp_paths = analyze_images(extract_dir, show_summary=True)
+
+    # 5. Iterative Compression and Rebuild
+    q = args.quality
+    final_size = 0
+    current_out = None
+
+    while True:
+        # Create a fresh build directory from the cleaned extract_dir
+        build_dir = TMP_ROOT / f"epub-build-{os.getpid()}-{q}"
+        if build_dir.exists():
+            shutil.rmtree(build_dir)
+        shutil.copytree(extract_dir, build_dir)
+
+        # Determine output path for this iteration if not explicitly provided
+        if args.output:
+            current_out = args.output
+        else:
+            suffix = "-lossless" if q == 100 else f"-q{q}"
+            current_out = GLOBAL_INPUT_FILE.with_stem(f"{GLOBAL_INPUT_FILE.stem}{suffix}")
+
+        compress_images(build_dir, q, jpg_paths, png_paths, webp_paths)
+        rebuild_epub(build_dir, current_out)
+        
+        final_size = current_out.stat().st_size
+        print(f"Quality {q}: {human(final_size)}")
+
+        # Clean up build directory
+        shutil.rmtree(build_dir)
+
+        # Stop if: target reached, no target set, or quality floor reached
+        target_met = not args.targetsize or (final_size / (1024 * 1024) <= args.targetsize)
+        if target_met or q <= 15:
+            break
+            
+        q = max(q - 5, 15)
+
+    print(f"\nFinal size: {human(final_size)} (saved {(original_size - final_size) / original_size:.1%}) of original {human(original_size)}")
+    print(f"Output file: {current_out}")
+    
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir)
 
 
 if __name__ == "__main__":
