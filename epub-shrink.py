@@ -796,10 +796,18 @@ def main():
 
         # Stop if: target reached, no target set, or quality floor reached
         target_met = not args.targetsize or (final_size / (1024 * 1024) <= args.targetsize)
-        if target_met or q <= 15:
+        MIN_QUALITY = 15
+        if target_met or q <= MIN_QUALITY:
             break
-            
-        q = max(q - 5, 15)
+        
+        QUALITY_STEP = 5
+        if q == 100: # just completed the lossless step, now switch to lossy with a smart initial quality setting
+            if max_estimated_quality > 0:
+                q = max_estimated_quality - 1
+            else:
+                q -= QUALITY_STEP
+        else:
+            q -= QUALITY_STEP
 
     print(f"\nFinal size: {human(final_size)} (saved {(original_size - final_size) / original_size:.1%}) of original {human(original_size)}")
     print(f"Output file: {current_out}")
