@@ -20,12 +20,43 @@ import tempfile
 import zipfile
 import subprocess
 import os
+import datetime
+import uuid
+import html
 from collections import defaultdict
-from xml.etree import ElementTree as ET
+from lxml import etree as ET
 from fnmatch import fnmatch
 from PIL import Image
 from bs4 import BeautifulSoup
 import tinycss2
+
+# Define deprecated items and their substitutions for EPUB modernization
+DEPRECATED_ITEMS = {
+    'tags': {
+        'center': ('div', {'style': 'text-align: center;'}),
+        'font': ('span', {}),
+        'strike': ('span', {'style': 'text-decoration: line-through;'}),
+        's': ('span', {'style': 'text-decoration: line-through;'}),
+        'u': ('span', {'style': 'text-decoration: underline;'}),
+        'big': ('span', {'style': 'font-size: larger;'}),
+        'tt': ('code', {}),
+        'acronym': ('abbr', {}),
+    },
+    'attributes': {
+        'align': 'style', 
+        'bgcolor': 'style',
+        'color': 'style',
+        'face': 'style',
+        'size': 'style',
+        'width': 'style',
+        'height': 'style',
+        'cellpadding': 'style',
+        'cellspacing': 'style',
+        'border': 'style',
+        'valign': 'style',
+        'rules': 'style',
+    }
+}
 
 TMP_ROOT = pathlib.Path(tempfile.gettempdir())
 
@@ -129,12 +160,315 @@ def load_opf():
             raise FileNotFoundError("No .opf file found in the EPUB")
     
     # Parse the OPF file to get manifest
-    tree = ET.parse(opf_path)
-    ns = {"opf": "http://www.idpf.org/2007/opf"}
+    tree = ET.parse(str(opf_path))
+    ns = {
+        "opf": "http://www.idpf.org/2007/opf",
+        "dc": "http://purl.org/dc/elements/1.1/",
+        "dcterms": "http://purl.org/dc/terms/",
+        "xsi": "http://www.w3.org/2001/XMLSchema-instance",
+        "ncx": "http://www.daisy.org/z3986/2005/ncx/"
+    }
     manifest = {item.attrib["href"]: item
                 for item in tree.findall(".//opf:item", ns)}
     
     return opf_path, tree, manifest, ns
+
+
+def fix_ncx(extract_dir):
+    """Add missing IDs to navPoint elements in NCX files."""
+    ncx_file = None
+    for root, dirs, files in os.walk(extract_dir):
+        for file in files:
+            if file.endswith('.ncx'):
+                ncx_path = pathlib.Path(root) / file
+                ncx_file = ncx_path
+                try:
+                    with open(ncx_path, 'r', encoding='utf-8') as f:
+                        soup = BeautifulSoup(f, 'lxml-xml')
+                    modified = False
+                    for i, navpoint in enumerate(soup.find_all('navPoint')):
+                        if not navpoint.has_attr('id'):
+                            navpoint['id'] = f"navpoint-{i+1}"
+                            modified = True
+                    if modified:
+                        with open(ncx_path, 'w', encoding='utf-8') as f:
+                            f.write(str(soup))
+                except Exception as e:
+                    print(f"Warning: Could not fix NCX {file}: {e}")
+    return ncx_file
+
+
+def generate_nav_from_ncx(ncx_path, nav_path):
+    """Generate an EPUB 3 nav document from an EPUB 2 NCX file."""
+    try:
+        with open(ncx_path, 'r', encoding='utf-8') as f:
+            ncx_soup = BeautifulSoup(f, 'lxml-xml')
+        
+        doc_title = ncx_soup.find('docTitle')
+        title_text = doc_title.find('text').text.strip() if doc_title and doc_title.find('text') else "Table of Contents"
+        title_text_escaped = html.escape(title_text)
+        
+        def process_nav_points(container):
+            points = container.find_all('navPoint', recursive=False)
+            if not points:
+                return ""
+            
+            res = "<ol>\n"
+            for pt in points:
+                nav_label = pt.find('navLabel')
+                label = nav_label.find('text').text if nav_label and nav_label.find('text') else "Unnamed"
+                content_tag = pt.find('content')
+                src = content_tag['src'] if content_tag and content_tag.has_attr('src') else "#"
+                res += f'    <li><a href="{html.escape(src)}">{html.escape(label)}</a>'
+                
+                # Handle nested points
+                nested = process_nav_points(pt)
+                if nested:
+                    res += "\n" + nested
+                
+                res += "</li>\n"
+            res += "</ol>\n"
+            return res
+
+        nav_map = ncx_soup.find('navMap')
+        ol_content = process_nav_points(nav_map) if nav_map else "<ol><li><a href=\"index.xhtml\">Contents</a></li></ol>"
+        
+        nav_content = f"""<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head>
+    <title>{title_text_escaped}</title>
+</head>
+<body>
+    <nav epub:type="toc" id="toc">
+        <h1>{title_text_escaped}</h1>
+        {ol_content}
+    </nav>
+</body>
+</html>"""
+        
+        with open(nav_path, 'w', encoding='utf-8') as f:
+            f.write(nav_content)
+        print(f"Generated nav.xhtml from {ncx_path.name}")
+    except Exception as e:
+        print(f"Warning: Could not generate nav from NCX: {e}")
+
+
+def handle_deprecated(soup):
+    """Convert deprecated HTML tags and attributes to modern CSS equivalents."""
+    modified = False
+    
+    # Handle obsolete meta tags
+    for meta in soup.find_all('meta'):
+        http_equiv = meta.get('http-equiv', '').lower()
+        if http_equiv in ['content-style-type', 'content-type']:
+            meta.decompose()
+            modified = True
+        elif meta.has_attr('charset'):
+            meta.decompose()
+            modified = True
+    
+    # Handle Tags
+    for tag_name, (new_name, extra_attrs) in DEPRECATED_ITEMS['tags'].items():
+        for tag in soup.find_all(tag_name):
+            tag.name = new_name
+            for attr, val in extra_attrs.items():
+                if tag.has_attr(attr):
+                    existing = tag[attr]
+                    if val not in existing:
+                        tag[attr] = f"{existing}; {val}" if ';' in val else val
+                else:
+                    tag[attr] = val
+            modified = True
+
+    # Handle Attributes
+    for tag in soup.find_all(True):
+        attrs_to_remove = []
+        for attr in list(tag.attrs):
+            if attr in DEPRECATED_ITEMS['attributes']:
+                val = tag[attr]
+                style = ""
+                if attr == 'align':
+                    style = f"float: {val};" if tag.name in ['img', 'table'] else f"text-align: {val};"
+                elif attr == 'bgcolor':
+                    style = f"background-color: {val};"
+                elif attr == 'color':
+                    style = f"color: {val};"
+                elif attr == 'width':
+                    style = f"width: {val}px;" if val.isdigit() else f"width: {val};"
+                elif attr == 'height':
+                    style = f"height: {val}px;" if val.isdigit() else f"height: {val};"
+                elif attr == 'border' and tag.name == 'table':
+                    style = f"border: {val}px solid;"
+                elif attr == 'cellspacing' and tag.name == 'table':
+                    style = f"border-spacing: {val}px;"
+                    if val == '0': style += " border-collapse: collapse;"
+                elif attr == 'rules' and tag.name == 'table':
+                    style = "border-collapse: collapse;"
+                elif attr == 'valign':
+                    style = f"vertical-align: {val};"
+
+                if style:
+                    if tag.has_attr('style'):
+                        existing = tag['style'].strip('; ')
+                        tag['style'] = f"{existing}; {style}" if existing else style
+                    else:
+                        tag['style'] = style
+                
+                attrs_to_remove.append(attr)
+                modified = True
+        
+        for attr in attrs_to_remove:
+            del tag[attr]
+
+    return modified
+
+
+def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
+    """Apply various modernizations to EPUB assets and OPF metadata."""
+    opf_root = tree.getroot()
+    opf_dir = opf_path.parent
+    
+    # 1. Fix NCX if it exists
+    ncx_path = fix_ncx(extract_dir)
+    
+    # 2. Ensure EPUB 3 navigation document
+    nav_item = next((item for item in manifest.values() if 'nav' in (item.get('properties') or '').split()), None)
+    if nav_item is None and ncx_path:
+        nav_href = 'nav.xhtml'
+        nav_abs_path = opf_dir / nav_href
+        generate_nav_from_ncx(ncx_path, nav_abs_path)
+        
+        # Add to OPF manifest
+        manifest_node = opf_root.find('opf:manifest', ns)
+        new_item = ET.SubElement(manifest_node, '{http://www.idpf.org/2007/opf}item')
+        new_id = "nav"
+        # Ensure ID is unique
+        existing_ids = {item.get('id') for item in manifest.values()}
+        while new_id in existing_ids:
+            new_id = f"nav-{uuid.uuid4().hex[:4]}"
+        new_item.set('id', new_id)
+        new_item.set('href', nav_href)
+        new_item.set('media-type', 'application/xhtml+xml')
+        new_item.set('properties', 'nav')
+        manifest[nav_href] = new_item
+        print(f"Added generated nav.xhtml to manifest as {new_id}")
+
+    # 3. Analyze and fix HTML/CSS files
+    ul_disc_needed = False
+    for href, item in list(manifest.items()):
+        if item.get('media-type') == 'application/xhtml+xml':
+            html_path = opf_dir / href
+            if not html_path.exists(): continue
+            
+            modified = False
+            try:
+                content = html_path.read_bytes()
+                soup = BeautifulSoup(content, 'lxml-xml')
+                
+                # Check for SVG
+                if soup.find('svg'):
+                    props = item.get('properties', '')
+                    if 'svg' not in (props or '').split():
+                        item.set('properties', ((props or '') + ' svg').strip())
+                        modified = True
+
+                # Handle deprecated tags/attributes
+                if handle_deprecated(soup): modified = True
+
+                # Fix aria attributes referring to missing IDs
+                for attr in ['aria-labelledby', 'aria-describedby']:
+                    for tag in soup.find_all(attrs={attr: True}):
+                        target_ids = tag[attr].split()
+                        valid_ids = [tid for tid in target_ids if soup.find(id=tid)]
+                        if len(valid_ids) != len(target_ids):
+                            if not valid_ids:
+                                del tag[attr]
+                            else:
+                                tag[attr] = " ".join(valid_ids)
+                            modified = True
+                
+                # Special handling for ul type="disc"
+                for ul in soup.find_all('ul'):
+                    if ul.has_attr('type'):
+                        if ul.has_attr('class'):
+                            del ul['type']
+                        elif ul['type'] == 'disc':
+                            ul['class'] = '_ul_disc'
+                            del ul['type']
+                            ul_disc_needed = True
+                        modified = True
+                
+                if modified:
+                    html_path.write_text(str(soup), encoding='utf-8')
+            except Exception as e:
+                print(f"Warning: Error modernizing {href}: {e}")
+
+    # 4. Inject CSS for ul_disc if needed
+    if ul_disc_needed:
+        css_href = next((h for h, m in manifest.items() if m.get('media-type') == 'text/css'), None)
+        if css_href:
+            css_path = opf_dir / css_href
+            try:
+                with open(css_path, 'a', encoding='utf-8') as f:
+                    f.write('\n._ul_disc { list-style-type: disc; }\n')
+            except Exception as e:
+                print(f"Warning: Error updating CSS {css_href}: {e}")
+
+    # 5. Modernize Metadata
+    metadata = opf_root.find('opf:metadata', ns)
+    if metadata is not None:
+        for child in metadata:
+            # Remove any attribute that starts with {http://www.idpf.org/2007/opf}
+            attrs_to_del = [a for a in child.attrib if a.startswith('{http://www.idpf.org/2007/opf}')]
+            for a in attrs_to_del:
+                del child.attrib[a]
+        
+        # Single dcterms:modified
+        for old_mod in metadata.findall('.//opf:meta[@property="dcterms:modified"]', ns):
+            metadata.remove(old_mod)
+        
+        now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        mod = ET.SubElement(metadata, '{http://www.idpf.org/2007/opf}meta')
+        mod.set('property', 'dcterms:modified')
+        mod.text = now
+
+    # 6. Standardize Font Media Types
+    font_map = {
+        '.ttf': 'application/vnd.ms-opentype',
+        '.otf': 'application/vnd.ms-opentype',
+        '.woff': 'font/woff',
+        '.woff2': 'font/woff2'
+    }
+    for item in manifest.values():
+        href = None
+        # Robustly get href
+        for attr, val in item.attrib.items():
+            if attr == 'href' or attr.endswith('}href'):
+                href = val
+                break
+        
+        if not href: continue
+        
+        ext = os.path.splitext(href.lower())[1]
+        if ext in font_map:
+            # Robustly get current media-type
+            current_type = None
+            for attr, val in item.attrib.items():
+                if attr == 'media-type' or attr.endswith('}media-type'):
+                    current_type = val
+                    break
+            
+            new_type = font_map[ext]
+            if current_type != new_type:
+                print(f"Modernizing font media-type for {href}: {current_type} -> {new_type}")
+                # Clean up all versions of media-type attribute to avoid duplicates
+                to_del = [a for a in item.attrib if a == 'media-type' or a.endswith('}media-type')]
+                for a in to_del: del item.attrib[a]
+                # Set plain media-type attribute
+                item.set('media-type', new_type)
+
+    # 7. Set EPUB version to 3.0
+    opf_root.set('version', '3.0')
 
 
 
@@ -732,7 +1066,7 @@ def analyze_file():
     return extract_dir, opf_path, tree, manifest, ns
 
 
-def fix(tree, manifest, ns, extract_dir, opf_path, show_summary=True):
+def prune_unreferenced_assets(tree, manifest, ns, extract_dir, opf_path, show_summary=True):
     """Remove unreferenced assets and write the updated OPF."""
     content_dir = opf_path.parent
     remove_unreferenced(manifest, tree, ns, extract_dir, content_dir, show_summary=show_summary)
@@ -758,15 +1092,18 @@ def main():
     # Refresh manifest after purge
     manifest = {item.attrib["href"]: item for item in tree.findall(".//opf:item", ns)}
 
-    # 3. Fix (Remove unreferenced and update OPF)
+    # 3. Modernize assets (convert deprecated tags, generate nav.xhtml, etc.)
+    modernize_assets(extract_dir, tree, manifest, ns, opf_path)
+
+    # 4. Prune unreferenced assets and update OPF
     if GLOBAL_VERBOSE:
         print("Performing reference analysis...")
-    fix(tree, manifest, ns, extract_dir, opf_path, show_summary=True)
+    prune_unreferenced_assets(tree, manifest, ns, extract_dir, opf_path, show_summary=True)
 
-    # 4. Image Analysis (Discovery and Summary)
+    # 5. Image Analysis (Discovery and Summary)
     jpg_paths, png_paths, webp_paths, max_estimated_quality = analyze_images(extract_dir, show_summary=True)
 
-    # 5. Iterative Compression and Rebuild
+    # 6. Iterative Compression and Rebuild
     q = args.quality
     final_size = 0
     current_out = None
