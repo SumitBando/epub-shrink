@@ -29,6 +29,7 @@ from fnmatch import fnmatch
 from PIL import Image
 from bs4 import BeautifulSoup
 import tinycss2
+from tqdm import tqdm
 
 # Define deprecated items and their substitutions for EPUB modernization
 DEPRECATED_ITEMS = {
@@ -355,11 +356,15 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
 
     # 3. Analyze and fix HTML/CSS files
     ul_disc_needed = False
-    for href, item in list(manifest.items()):
-        if item.get('media-type') == 'application/xhtml+xml':
+    html_items = [(h, i) for h, i in manifest.items() if i.get('media-type') == 'application/xhtml+xml']
+    
+    if html_items:
+        pbar = tqdm(html_items, unit="file", desc="Modernizing assets", leave=True)
+        for href, item in pbar:
             html_path = opf_dir / href
             if not html_path.exists(): continue
             
+            pbar.set_postfix(file=href[-30:], refresh=False)
             modified = False
             try:
                 content = html_path.read_bytes()
@@ -401,7 +406,8 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
                 if modified:
                     html_path.write_text(str(soup), encoding='utf-8')
             except Exception as e:
-                print(f"Warning: Error modernizing {href}: {e}")
+                pbar.write(f"Warning: Error modernizing {href}: {e}")
+        pbar.close()
 
     # 4. Inject CSS for ul_disc if needed
     if ul_disc_needed:
@@ -531,24 +537,30 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
 
     # 2. Iteratively find all references by scanning files
     # Start scanning with all XHTML files, not just the spine
-    files_to_scan = [href for href, item in manifest.items() if item.attrib.get("media-type") == "application/xhtml+xml"]
+    files_to_scan = []
+    seen_queued = set()
+    for href, item in manifest.items():
+        if item.attrib.get("media-type") == "application/xhtml+xml":
+            if href not in seen_queued:
+                files_to_scan.append(href)
+                seen_queued.add(href)
     
     processed_scans = set()
-    scan_count = 0
-
+    
+    pbar = tqdm(total=len(files_to_scan), unit="file", desc="Scanning references", disable=not show_summary, leave=True)
     while files_to_scan:
         href = files_to_scan.pop(0)
         if href in processed_scans:
+            pbar.total -= 1
             continue
         processed_scans.add(href)
         files_to_keep.add(href)
         
-        scan_count += 1
-        if scan_count % 50 == 0:
-            print(f"Scanned {scan_count} files...")
+        pbar.set_postfix(file=href[-40:], refresh=False)
 
         file_path = content_dir / href
         if not file_path.exists():
+            pbar.update(1)
             continue
 
         file_dir = file_path.parent
@@ -567,8 +579,10 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
                         ref = ref.split('#')[0]
                         abs_path = os.path.normpath(os.path.join(file_dir, ref))
                         content_relative_path = os.path.relpath(abs_path, content_dir)
-                        if content_relative_path in manifest and content_relative_path not in processed_scans:
+                        if content_relative_path in manifest and content_relative_path not in seen_queued:
                             files_to_scan.append(content_relative_path)
+                            seen_queued.add(content_relative_path)
+                            pbar.total += 1
 
                 for tag in soup.find_all(True, attrs={'src': True}):
                     ref = tag.get('src')
@@ -576,8 +590,10 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
                         ref = ref.split('#')[0]
                         abs_path = os.path.normpath(os.path.join(file_dir, ref))
                         content_relative_path = os.path.relpath(abs_path, content_dir)
-                        if content_relative_path in manifest and content_relative_path not in processed_scans:
+                        if content_relative_path in manifest and content_relative_path not in seen_queued:
                             files_to_scan.append(content_relative_path)
+                            seen_queued.add(content_relative_path)
+                            pbar.total += 1
                 
                 # Scan style attributes
                 for tag in soup.find_all(True, attrs={'style': True}):
@@ -588,8 +604,10 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
                                 ref = ref.split('#')[0]
                                 abs_path = os.path.normpath(os.path.join(file_dir, ref))
                                 content_relative_path = os.path.relpath(abs_path, content_dir)
-                                if content_relative_path in manifest and content_relative_path not in processed_scans:
+                                if content_relative_path in manifest and content_relative_path not in seen_queued:
                                     files_to_scan.append(content_relative_path)
+                                    seen_queued.add(content_relative_path)
+                                    pbar.total += 1
                     except Exception:
                         pass
             
@@ -611,15 +629,21 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
                                 ref = ref.split('#')[0]
                                 abs_path = os.path.normpath(os.path.join(file_dir, ref))
                                 content_relative_path = os.path.relpath(abs_path, content_dir)
-                                if content_relative_path in manifest and content_relative_path not in processed_scans:
+                                if content_relative_path in manifest and content_relative_path not in seen_queued:
                                     files_to_scan.append(content_relative_path)
+                                    seen_queued.add(content_relative_path)
+                                    pbar.total += 1
                 except Exception as e:
                     if GLOBAL_VERBOSE:
-                        print(f"Error parsing CSS {href}: {e}")
+                        pbar.write(f"Error parsing CSS {href}: {e}")
 
         except Exception as e:
             if GLOBAL_VERBOSE:
-                print(f"Error scanning file {href}: {e}")
+                pbar.write(f"Error scanning file {href}: {e}")
+        
+        pbar.update(1)
+    
+    pbar.close()
 
     # 3. Remove files that are not in our final keep list
     # Pre-calculate parent map for efficient node removal
@@ -749,27 +773,35 @@ def analyze_images(root, show_summary=True):
     max_estimated_quality = 0
     type_summaries = []
     
-    for name, paths in types:
-        count = len(paths)
-        if count == 0:
-            type_summaries.append(f"0 {name} files")
-            continue
+    total_images = sum(len(paths) for _, paths in types)
+    if total_images > 0:
+        pbar = tqdm(total=total_images, unit="img", desc="Analyzing images", leave=True)
+        for name, paths in types:
+            count = len(paths)
+            if count == 0:
+                type_summaries.append(f"0 {name} files")
+                continue
+                
+            size = 0
+            type_max_q = 0
+            for p in paths:
+                full_path = root / p
+                pbar.set_postfix(file=p.name[-30:], refresh=False)
+                size += full_path.stat().st_size
+                info = analyze_image_quality(full_path)
+                q = info.get("estimated_quality")
+                if q:
+                    type_max_q = max(type_max_q, q)
+                    max_estimated_quality = max(max_estimated_quality, q)
+                pbar.update(1)
             
-        size = 0
-        type_max_q = 0
-        for p in paths:
-            full_path = root / p
-            size += full_path.stat().st_size
-            info = analyze_image_quality(full_path)
-            q = info.get("estimated_quality")
-            if q:
-                type_max_q = max(type_max_q, q)
-                max_estimated_quality = max(max_estimated_quality, q)
-        
-        summary = f"{count} {name} / {human(size)}"
-        if type_max_q > 0:
-            summary += f" (max q: {type_max_q})"
-        type_summaries.append(summary)
+            summary = f"{count} {name} / {human(size)}"
+            if type_max_q > 0:
+                summary += f" (max q: {type_max_q})"
+            type_summaries.append(summary)
+        pbar.close()
+    else:
+        type_summaries = ["0 JPEG files", "0 PNG files", "0 WebP files"]
 
     if show_summary:
         summary_line = f"Found {type_summaries[0]}, {type_summaries[1]} and {type_summaries[2]}"
@@ -783,164 +815,92 @@ def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
     
     savings = []
     
-    # Process PNG files by directory to optimize oxipng performance
-    if png_paths and quality == 100:
-        png_dirs = defaultdict(list)
-        for rel_path in png_paths:
-            p = root / rel_path
-            png_dirs[p.parent].append(p)
-        
-        for directory, files in png_dirs.items():
-            if GLOBAL_VERBOSE:
-                print(f"\nProcessing {len(files)} PNG files in {directory.relative_to(root)} using oxipng with quality: {quality}...")
-            
-            # Record sizes and analysis data before compression
-            before_data = {}
-            for f in files:
-                if GLOBAL_VERBOSE:
-                    image_info = analyze_image_quality(f)
-                    before_data[f] = {
-                        'size': f.stat().st_size,
-                        'analysis': image_info
-                    }
-                else:
-                    before_data[f] = {'size': f.stat().st_size}
-            
-            # Run the optimization
-            oxipng_args = ["oxipng", "-o", "max", "--strip", "all", "--alpha", "--threads", "4"]
-            if not GLOBAL_VERBOSE:
-                oxipng_args.append("-q")
-            
-            oxipng_args.extend([str(f) for f in files])
-            subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
-            
-            # Compare before and after
-            for f in files:
-                before = before_data[f]['size']
-                after = f.stat().st_size
-                if GLOBAL_VERBOSE:
-                    relative_path = f.relative_to(root)
-                    reduction_pct = (before - after) / before * 100 if before > 0 else 0
-                    image_info = before_data[f]['analysis']
-                    if 'error' not in image_info:
-                        dims = f"{image_info['dimensions'][0]}x{image_info['dimensions'][1]}"
-                        mode = image_info['mode']
-                        color_type = "Unknown"
-                        if image_info['png_info'] and 'color_type' in image_info['png_info']:
-                            color_type = image_info['png_info']['color_type']
-                        
-                        print(f"PNG: {relative_path} | Dims: {dims} | Mode: {mode} | Type: {color_type} | {human(before)} → {human(after)} ({reduction_pct:.1f}% saved)")
-                
-                savings.append((before, after))
+    # Define groups
+    groups = [
+        (jpg_paths, 'JPEG'),
+        (png_paths, 'PNG'),
+        (webp_paths, 'WebP')
+    ]
     
-    # Process JPEG files by directory to optimize jpegoptim performance
-    if jpg_paths and quality == 100:        
-        jpg_dirs = defaultdict(list)
-        for rel_path in jpg_paths:
-            p = root / rel_path
-            jpg_dirs[p.parent].append(p)
+    for paths, img_type in groups:
+        if not paths:
+            continue
+            
+        total_before = 0
+        total_after = 0
         
-        for directory, files in jpg_dirs.items():
+        desc = f"Optimizing {img_type}s" if quality == 100 else f"Compressing {img_type}s (q={quality})"
+        pbar = tqdm(paths, unit="img", desc=desc, leave=True)
+        
+        for rel_path in pbar:
+            p = root / rel_path
+            if not p.exists():
+                continue
+                
+            pbar.set_postfix(file=rel_path.name[-30:], refresh=False)
+            before = p.stat().st_size
+            total_before += before
+            
+            image_info = None
             if GLOBAL_VERBOSE:
-                print(f"\nProcessing {len(files)} JPEG files in {directory.relative_to(root)} using jpegoptim with quality: {quality}...")
-            
-            # Record sizes and analysis data before compression
-            before_data = {}
-            for f in files:
-                if GLOBAL_VERBOSE:
-                    image_info = analyze_image_quality(f)
-                    before_data[f] = {
-                        'size': f.stat().st_size,
-                        'analysis': image_info
-                    }
+                image_info = analyze_image_quality(p)
+                
+            try:
+                if quality == 100:
+                    if img_type == 'PNG':
+                        oxipng_args = ["oxipng", "-o", "max", "--strip", "all", "--alpha", "--threads", "4", "-q", str(p)]
+                        subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
+                    elif img_type == 'JPEG':
+                        jpegoptim_args = ["jpegoptim", "--strip-all", "-q", str(p)]
+                        subprocess.run(jpegoptim_args, stdout=subprocess.DEVNULL)
+                    else:
+                        # Lossless fallback for WebP or others
+                        img = Image.open(p)
+                        img.save(p, format=img.format, optimize=True)
                 else:
-                    before_data[f] = {'size': f.stat().st_size}
-            
-            # Run the optimization
-            jpegoptim_args = ["jpegoptim", "--strip-all"]
-            if not GLOBAL_VERBOSE:
-                jpegoptim_args.append("-q")
-            
-            jpegoptim_args.extend([str(f) for f in files])
-            subprocess.run(jpegoptim_args, stdout=subprocess.DEVNULL)
-            
-            # Compare before and after
-            for f in files:
-                before = before_data[f]['size']
-                after = f.stat().st_size
+                    img = Image.open(p)
+                    fmt = img.format
+                    if fmt == "JPEG":
+                        img.save(p, format="JPEG", quality=quality, optimize=True, progressive=True)
+                    elif fmt == "PNG":
+                        # For lossy PNG, convert to palette-based image
+                        img = img.convert("P", palette=Image.ADAPTIVE)
+                        img.save(p, format="PNG", optimize=True)
+                    else:
+                        img.save(p, format=fmt, quality=quality, optimize=True)
+            except Exception as e:
                 if GLOBAL_VERBOSE:
-                    relative_path = f.relative_to(root)
-                    reduction_pct = (before - after) / before * 100 if before > 0 else 0
-                    image_info = before_data[f]['analysis']
-                    if 'error' not in image_info:
-                        dims = f"{image_info['dimensions'][0]}x{image_info['dimensions'][1]}"
-                        mode = image_info['mode']
+                    pbar.write(f"Image compress error: {p} {e}")
+            
+            after = p.stat().st_size
+            total_after += after
+            savings.append((before, after))
+            
+            if GLOBAL_VERBOSE:
+                reduction_pct = (before - after) / before * 100 if before > 0 else 0
+                if image_info and 'error' not in image_info:
+                    fmt = image_info['format']
+                    dims = f"{image_info['dimensions'][0]}x{image_info['dimensions'][1]}"
+                    mode = image_info['mode']
+                    output = f"{fmt}: {rel_path} | Dims: {dims} | Mode: {mode}"
+                    if fmt == "JPEG":
                         est_quality = f"{image_info['estimated_quality'] or 'Unknown'}"
-                        
-                        print(f"{relative_path} | Dims: {dims} | Mode: {mode} | Est.Quality: {est_quality} | {human(before)} → {human(after)} ({reduction_pct:.1f}% saved)")
-                
-                savings.append((before, after))
-    
-    # Handle WebP files and other quality settings for JPEG/PNG
-    img_rel_paths = webp_paths + [p for p in png_paths if quality != 100] + [p for p in jpg_paths if quality != 100]
-    
-    for rel_path in img_rel_paths:
-        p = root / rel_path
-        # Store analysis data before compression
-        before = p.stat().st_size
-        image_info = None
-        
-        if GLOBAL_VERBOSE:
-            image_info = analyze_image_quality(p)
-        
-        # Compress the image
-        try:
-            img = Image.open(p)
-            fmt = img.format
-            if quality == 100:
-                # Lossless fallback for formats other than batch-processed JPEG/PNG (e.g. WebP)
-                img.save(p, format=fmt, optimize=True)
-            else:
-                if fmt == "JPEG":
-                    img.save(p, format="JPEG", quality=quality,
-                             optimize=True, progressive=True)
-                elif fmt == "PNG":
-                    # For lossy PNG, convert to palette-based image
-                    img = img.convert("P", palette=Image.ADAPTIVE)
-                    img.save(p, format="PNG", optimize=True)
+                        output += f" | Est.Quality: {est_quality}"
+                    elif fmt == "PNG" and image_info['png_info']:
+                        color_type = image_info['png_info'].get('color_type', 'Unknown')
+                        output += f" | Type: {color_type}"
+                    output += f" | Quality: {quality} | {human(before)} → {human(after)} ({reduction_pct:.1f}% saved)"
+                    pbar.write(output)
                 else:
-                    img.save(p, format=fmt, quality=quality, optimize=True)
-        except Exception as e:
-            if GLOBAL_VERBOSE:
-                print("Image compress error:", p, e)
+                    pbar.write(f"File: {rel_path} | {human(before)} → {human(after)} ({reduction_pct:.1f}% saved)")
+                    
+        pbar.close()
         
-        after = p.stat().st_size
-        
-        if GLOBAL_VERBOSE:
-            relative_path = p.relative_to(root)
-            reduction_pct = (before - after) / before * 100 if before > 0 else 0
+        if total_before > 0:
+            reduction_pct = (total_before - total_after) / total_before * 100
+            action = "Optimized" if quality == 100 else "Compressed"
+            print(f"{action} {img_type}s (q={quality}): {human(total_before)} → {human(total_after)} ({reduction_pct:.1f}% saved)")
             
-            if image_info and 'error' not in image_info:
-                fmt = image_info['format']
-                dims = f"{image_info['dimensions'][0]}x{image_info['dimensions'][1]}"
-                mode = image_info['mode']
-                
-                output = f"{fmt}: {relative_path} | Dims: {dims} | Mode: {mode}"
-                
-                if fmt == "JPEG":
-                    est_quality = f"{image_info['estimated_quality'] or 'Unknown'}"
-                    output += f" | Est.Quality: {est_quality}"
-                elif fmt == "PNG" and image_info['png_info']:
-                    color_type = image_info['png_info'].get('color_type', 'Unknown')
-                    output += f" | Type: {color_type}"
-                
-                output += f" | Quality: {quality} | {human(before)} → {human(after)} ({reduction_pct:.1f}% saved)"
-                print(output)
-            else:
-                print(f"File: {relative_path} | {human(before)} → {human(after)} ({reduction_pct:.1f}% saved)")
-        
-        savings.append((before, after))
-    
     return savings
 
 
@@ -1049,15 +1009,19 @@ def analyze_image_quality(path: pathlib.Path):
 
 
 def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
+    all_files = sorted([f for f in root.rglob("*") if f.is_file()])
     with zipfile.ZipFile(out_path, "w") as z:
         mimetype_path = root / "mimetype"
         if mimetype_path.exists():
             # this file must be the first and uncompressed
             z.write(mimetype_path, "mimetype", compress_type=zipfile.ZIP_STORED)
+            all_files = [f for f in all_files if f.name != "mimetype"]
 
-        for file in sorted(root.rglob("*")):
-            if file.is_file() and file.name != "mimetype":
-                z.write(file, file.relative_to(root), compress_type=zipfile.ZIP_DEFLATED)
+        pbar = tqdm(all_files, unit="file", desc="Rebuilding EPUB", leave=True)
+        for file in pbar:
+            pbar.set_postfix(file=file.name[-30:], refresh=False)
+            z.write(file, file.relative_to(root), compress_type=zipfile.ZIP_DEFLATED)
+        pbar.close()
 
 def analyze_file():
     """Extract EPUB and load metadata."""

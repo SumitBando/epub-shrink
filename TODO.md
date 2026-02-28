@@ -1,5 +1,3 @@
-- merge rebind.py
-
 - when compressing to a target size, instead of compressing images by 5% more every time, use the initial size against the target size to guess required compression. E.g. if the original is more than 2x the target, start at 80% quality; if output turns out to be still more than 2x, then try next at 60% quality. However, if the previous output was within 100% excess, try reducing by 10% steps. If the previous failed was within 50%, try reducing quality by another 5%. E.g. a sequence may be q80, q60, q50, q40, q35. Change QUALITY_STEP = 5 to be dynamic
 
 - Check https://github.com/karpathy/reader3/blob/master/reader3.py
@@ -42,6 +40,7 @@
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] improve progress display with tqdm for file scanning, image compression etc.
 - [x] since we are looking at the image statistics and know image estimated quality, it does not make sense to start the compression loop at higher than the existing estimated quality
 - [x] for the images, show the highest of the estimated quality
 - [x] research and improve oxipng invocation, e.g. one suggestion was to change args:
