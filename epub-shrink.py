@@ -81,6 +81,10 @@ def verify_compressors_availability():
         print("Please install missing PNG compressor oxipng for PNG optimization")
         sys.exit(1)
 
+    if not shutil.which("pngquant"):
+        print("Please install missing PNG compressor pngquant for lossy PNG optimization")
+        sys.exit(1)
+
 
 def human(n: int) -> str:
     for unit in ('B', 'KB', 'MB', 'GB'):

@@ -40,6 +40,8 @@
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] for the nn lossless case, use pngquant to compress PNG. show progress with tqdm
+
 - [x] improve progress display with tqdm for file scanning, image compression etc.
 - [x] since we are looking at the image statistics and know image estimated quality, it does not make sense to start the compression loop at higher than the existing estimated quality
 - [x] for the images, show the highest of the estimated quality
