@@ -118,6 +118,7 @@ def unzip() -> pathlib.Path:
     global GLOBAL_INPUT_FILE, GLOBAL_EXTRACT_DIR
     """Extract the EPUB to a new temporary directory."""
     GLOBAL_EXTRACT_DIR = TMP_ROOT / f"epub-shrink-{os.getpid()}"
+    print(f"Extracting {GLOBAL_INPUT_FILE} to temporary directory {GLOBAL_EXTRACT_DIR}")
     if GLOBAL_EXTRACT_DIR.exists():
         shutil.rmtree(GLOBAL_EXTRACT_DIR)
     GLOBAL_EXTRACT_DIR.mkdir()
