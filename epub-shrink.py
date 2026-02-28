@@ -211,7 +211,15 @@ def generate_nav_from_ncx(ncx_path, nav_path):
             ncx_soup = BeautifulSoup(f, 'lxml-xml')
         
         doc_title = ncx_soup.find('docTitle')
-        title_text = doc_title.find('text').text.strip() if doc_title and doc_title.find('text') else "Table of Contents"
+        title_text = ""
+        if doc_title:
+            text_el = doc_title.find('text')
+            if text_el:
+                title_text = text_el.get_text().strip()
+        
+        if not title_text:
+            title_text = "Table of Contents"
+            
         title_text_escaped = html.escape(title_text)
         
         def process_nav_points(container):
@@ -222,7 +230,15 @@ def generate_nav_from_ncx(ncx_path, nav_path):
             res = "<ol>\n"
             for pt in points:
                 nav_label = pt.find('navLabel')
-                label = nav_label.find('text').text if nav_label and nav_label.find('text') else "Unnamed"
+                label = ""
+                if nav_label:
+                    text_el = nav_label.find('text')
+                    if text_el:
+                        label = text_el.get_text().strip()
+                
+                if not label:
+                    label = "Unnamed"
+                
                 content_tag = pt.find('content')
                 src = content_tag['src'] if content_tag and content_tag.has_attr('src') else "#"
                 res += f'    <li><a href="{html.escape(src)}">{html.escape(label)}</a>'
@@ -428,11 +444,16 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
     # 5. Modernize Metadata
     metadata = opf_root.find('opf:metadata', ns)
     if metadata is not None:
-        for child in metadata:
+        for child in list(metadata):
             # Remove any attribute that starts with {http://www.idpf.org/2007/opf}
             attrs_to_del = [a for a in child.attrib if a.startswith('{http://www.idpf.org/2007/opf}')]
             for a in attrs_to_del:
                 del child.attrib[a]
+            
+            # Remove empty dc metadata elements (allowed in EPUB 2 but not EPUB 3)
+            if child.tag.startswith('{' + ns['dc'] + '}') and not (child.text and child.text.strip()) and not list(child):
+                metadata.remove(child)
+                continue
         
         # Single dcterms:modified
         for old_mod in metadata.findall('.//opf:meta[@property="dcterms:modified"]', ns):
