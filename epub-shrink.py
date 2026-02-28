@@ -1105,14 +1105,28 @@ def main():
         if target_met or q <= MIN_QUALITY:
             break
         
-        QUALITY_STEP = 5
-        if q == 100: # just completed the lossless step, now switch to lossy with a smart initial quality setting
-            if max_estimated_quality > 0:
-                q = max_estimated_quality - 1
+        # Calculate next quality dynamically
+        target_bytes = args.targetsize * 1024 * 1024
+        ratio = final_size / target_bytes
+        
+        if q == 100: 
+            # First lossy pass: if way over target, jump to 80, otherwise use max_estimated_quality
+            if ratio > 2.0:
+                q = 80
+            elif max_estimated_quality > 0:
+                q = min(99, max_estimated_quality - 1)
             else:
-                q -= QUALITY_STEP
+                q = 95
         else:
-            q -= QUALITY_STEP
+            if ratio > 2.0:
+                q -= 20
+            elif ratio > 1.5:
+                q -= 10
+            else:
+                q -= 5
+        
+        # Ensure we don't drop below minimum or stay at same quality
+        q = max(MIN_QUALITY, q)
 
     print(f"\nFinal size: {human(final_size)} (saved {(original_size - final_size) / original_size:.1%}) of original {human(original_size)}")
     print(f"Output file: {current_out}")
