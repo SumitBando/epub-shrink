@@ -348,6 +348,13 @@ def handle_deprecated(soup):
         for attr in attrs_to_remove:
             del tag[attr]
 
+    # Convert <a name="..."> to <a id="..."> for EPUB 3 (RSC-012)
+    for a in soup.find_all('a', attrs={'name': True}):
+        if not a.has_attr('id'):
+            a['id'] = a['name']
+        del a['name']
+        modified = True
+
     return modified
 
 
@@ -358,6 +365,10 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
     
     # 1. Fix NCX if it exists
     ncx_path = fix_ncx(extract_dir)
+
+    # Remove obsolete <tours> element (RSC-005)
+    for tours in opf_root.findall('opf:tours', ns):
+        opf_root.remove(tours)
     
     # 2. Ensure EPUB 3 navigation document
     nav_item = next((item for item in manifest.values() if 'nav' in (item.get('properties') or '').split()), None)
@@ -396,6 +407,12 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
             try:
                 content = html_path.read_bytes()
                 soup = BeautifulSoup(content, 'lxml-xml')
+
+                # Ensure XHTML namespace (RSC-005)
+                html_tag = soup.find('html')
+                if html_tag and not html_tag.has_attr('xmlns'):
+                    html_tag['xmlns'] = "http://www.w3.org/1999/xhtml"
+                    modified = True
                 
                 # Check for SVG
                 if soup.find('svg'):
@@ -518,6 +535,46 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
 
     # 7. Set EPUB version to 3.0
     opf_root.set('version', '3.0')
+
+    # 8. Ensure Non-Linear Content is Reachable (OPF-096)
+    non_linear_items = []
+    spine = opf_root.find('opf:spine', ns)
+    if spine is not None:
+        for itemref in spine.findall('opf:itemref[@linear="no"]', ns):
+            idref = itemref.get('idref')
+            for href, m_item in manifest.items():
+                if m_item.get('id') == idref:
+                    non_linear_items.append((href, itemref))
+                    break
+
+    if non_linear_items:
+        nav_item = next((item for item in manifest.values() if 'nav' in (item.get('properties') or '').split()), None)
+        if nav_item is not None:
+            nav_href = nav_item.get('href')
+            nav_path = opf_dir / unquote(nav_href)
+            if nav_path.exists():
+                try:
+                    import posixpath
+                    content = nav_path.read_bytes()
+                    soup = BeautifulSoup(content, 'lxml-xml')
+                    body = soup.find('body')
+                    if body:
+                        hidden_div = soup.new_tag('div', style="display:none; visibility:hidden;", id="hidden-reachability-links")
+                        for href, _ in non_linear_items:
+                            rel_href = posixpath.relpath(href, posixpath.dirname(nav_href))
+                            a = soup.new_tag('a', href=rel_href)
+                            a.string = f"Reachability link for {href}"
+                            hidden_div.append(a)
+                        body.append(hidden_div)
+                        nav_path.write_text(str(soup), encoding='utf-8')
+                        print(f"Added {len(non_linear_items)} reachability links to {nav_href}")
+                except Exception as e:
+                    print(f"Warning: Could not add reachability links to nav: {e}")
+        else:
+            for _, itemref in non_linear_items:
+                if 'linear' in itemref.attrib:
+                    del itemref.attrib['linear']
+            print(f"Marked {len(non_linear_items)} non-linear items as linear because nav.xhtml is missing")
 
 
 

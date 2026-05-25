@@ -1,3 +1,39 @@
+# Fix RSC-005:
+- `<meta>` tags contain a `value` attribute which is not allowed. Convert `value` to `content` or handle according to EPUB 3 specs. (Include a test case).
+- `<meta>` tags are missing one or more required attributes (e.g., `name`, `property`). (Include a test case).
+
+# Fix RSC-005: Nested `<a>` tags (`<a>` elements must not appear inside `<a>` elements). (Include a test case).
+
+# Fix validate image files
+ERROR: Invalid image: cannot identify image file <_io.BytesIO object at 0x000001A55E134360>    [EPUB/images/Federica_Bocco_Headshot.jpg]
+
+
+[TODO] 
+ERROR: The meta cover tag has content before name    [OEBPS/theworld.opf:12]
+
+[TODO] 
+WARNING: The file OEBPS/page-template.xpgt has a MIME type that does not match its extension    [OEBPS/theworld.opf]
+
+[TODO] 
+WARNING: Invalid id: _RWTOC-25    [OEBPS/theworld_ack.html:11]
+WARNING: Invalid id: _RWTOC-32    [OEBPS/theworld_adc01.html:11]
+WARNING: Invalid id: _RWTOC-31    [OEBPS/theworld_ata.html:11]
+WARNING: Invalid id: _RWTOC-1    [OEBPS/theworld_ch01.html:11]
+WARNING: Invalid id: _RWTOC-5    [OEBPS/theworld_ch03.html:11]
+WARNING: Invalid id: _RWTOC-7    [OEBPS/theworld_ch04.html:11]
+WARNING: Invalid id: _RWTOC-9    [OEBPS/theworld_ch05.html:11]
+WARNING: Invalid id: _RWTOC-10    [OEBPS/theworld_ch05.html:12]
+WARNING: Invalid id: _RWTOC-11    [OEBPS/theworld_ch06.html:11]
+WARNING: Invalid id: _RWTOC-15    [OEBPS/theworld_ch08.html:11]
+WARNING: Invalid id: _RWTOC-16    [OEBPS/theworld_ch08.html:12]
+WARNING: Invalid id: _RWTOC-19    [OEBPS/theworld_ch10.html:11]
+WARNING: Invalid id: _RWTOC-23    [OEBPS/theworld_ch12.html:11]
+
+[TODO] After processing still has:
+ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
+
+
+
 - Check https://github.com/karpathy/reader3/blob/master/reader3.py
 
 - BUG when purging an item like         "SS_recommendpage*", remove from nav
@@ -36,29 +72,3 @@
   the cover image.
 
 - Check repo https://github.com/martinus/epuboptim
-
-# Completed tasks
-- [x] when compressing to a target size, instead of compressing images by 5% more every time, use the initial size against the target size to guess required compression. E.g. if the original is more than 2x the target, start at 80% quality; if output turns out to be still more than 2x, then try next at 60% quality. However, if the previous output was within 100% excess, try reducing by 10% steps. If the previous failed was within 50%, try reducing quality by another 5%. E.g. a sequence may be q80, q60, q50, q40, q35. Change QUALITY_STEP = 5 to be dynamic
-
-- [x] for the nn lossless case, use pngquant to compress PNG. show progress with tqdm
-
-- [x] improve progress display with tqdm for file scanning, image compression etc.
-- [x] since we are looking at the image statistics and know image estimated quality, it does not make sense to start the compression loop at higher than the existing estimated quality
-- [x] for the images, show the highest of the estimated quality
-- [x] research and improve oxipng invocation, e.g. one suggestion was to change args:
-  oxipng_args = [
-      "oxipng", 
-      "-o", "max", 
-      "--strip", "all", 
-      "--alpha", 
-      "--threads", "4"
-  ]
-- [x] font files referenced from style should not be purged (also handles quoted url() and background images)
-- [x] when showing image count summary, also display size per type, e.g. change
-  Found 4 JPEG files, 0 PNG files, and 0 WebP files
-  to
-  Found 4 JPEG / 20MB, 1 PNG / 145KB and 0 WebP files
-
-
-- [x] when iteratively compressing images in a file, dont show file statistics every iteration, show it only on first inspection,
-  e.g. avoid showing multiple times: Found 225 JPEG files, 43 PNG files, and 0 WebP files
