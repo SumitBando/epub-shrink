@@ -54,3 +54,5 @@ Running on `tests/Songs.epub`, the following files should be dropped:
 Do not delete the test file.
 
 TODOs are in TODO.md. Add new TODO items at the top of the file
+
+When suggesting a Commit message, only talk about the current task, dont conflate them with previous tasks. Review what is Staged to be commited, and create message based on that.

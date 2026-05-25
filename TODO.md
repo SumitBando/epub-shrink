@@ -1,7 +1,3 @@
-# Fix RSC-005:
-- `<meta>` tags contain a `value` attribute which is not allowed. Convert `value` to `content` or handle according to EPUB 3 specs. (Include a test case).
-- `<meta>` tags are missing one or more required attributes (e.g., `name`, `property`). (Include a test case).
-
 # Fix RSC-005: Nested `<a>` tags (`<a>` elements must not appear inside `<a>` elements). (Include a test case).
 
 # Fix validate image files

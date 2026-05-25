@@ -488,6 +488,20 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
             if child.tag.startswith('{' + ns['dc'] + '}') and not (child.text and child.text.strip()) and not list(child):
                 metadata.remove(child)
                 continue
+
+            # Handle <meta> tags (RSC-005)
+            if child.tag == '{' + ns['opf'] + '}meta':
+                # Convert 'value' attribute to 'content'
+                if 'value' in child.attrib:
+                    val = child.attrib.pop('value')
+                    if 'content' not in child.attrib:
+                        child.set('content', val)
+                
+                # Check for required attributes (name, property, or refines)
+                if not any(attr in child.attrib for attr in ['name', 'property', 'refines']):
+                    print(f"Warning: Removing invalid <meta> tag missing required attributes in {opf_path.name}: {ET.tostring(child, encoding='unicode').strip()}")
+                    metadata.remove(child)
+                    continue
         
         # Single dcterms:modified
         for old_mod in metadata.findall('.//opf:meta[@property="dcterms:modified"]', ns):
