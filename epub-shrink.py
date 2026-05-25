@@ -289,6 +289,11 @@ def handle_deprecated(soup):
             meta.decompose()
             modified = True
     
+    # Remove epub:trigger elements (deprecated in EPUB 3 and cause validation errors)
+    for trigger in soup.find_all(['epub:trigger', 'trigger']):
+        trigger.decompose()
+        modified = True
+
     # Handle Tags
     for tag_name, (new_name, extra_attrs) in DEPRECATED_ITEMS['tags'].items():
         for tag in soup.find_all(tag_name):
@@ -445,6 +450,12 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
     metadata = opf_root.find('opf:metadata', ns)
     if metadata is not None:
         for child in list(metadata):
+            if not isinstance(child.tag, str):
+                if child.tag is ET.Comment:
+                    continue # Silently preserve comments
+                print(f"Notice: skipping non-element metadata node in {opf_path.name}:{child.sourceline} ({type(child.tag).__name__}): {repr(child.text)}")
+                continue
+
             # Remove any attribute that starts with {http://www.idpf.org/2007/opf}
             attrs_to_del = [a for a in child.attrib if a.startswith('{http://www.idpf.org/2007/opf}')]
             for a in attrs_to_del:
