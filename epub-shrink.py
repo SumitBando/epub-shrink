@@ -23,6 +23,7 @@ import os
 import datetime
 import uuid
 import html
+from urllib.parse import unquote
 from collections import defaultdict
 from lxml import etree as ET
 from fnmatch import fnmatch
@@ -387,7 +388,7 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
     if html_items:
         pbar = tqdm(html_items, unit="file", desc="Modernizing assets", leave=True)
         for href, item in pbar:
-            html_path = opf_dir / href
+            html_path = opf_dir / unquote(href)
             if not html_path.exists(): continue
             
             pbar.set_postfix(file=href[-30:], refresh=False)
@@ -410,6 +411,11 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
                 for attr in ['aria-labelledby', 'aria-describedby']:
                     for tag in soup.find_all(attrs={attr: True}):
                         target_ids = tag[attr].split()
+                        if not target_ids:
+                            del tag[attr]
+                            modified = True
+                            continue
+
                         valid_ids = [tid for tid in target_ids if soup.find(id=tid)]
                         if len(valid_ids) != len(target_ids):
                             if not valid_ids:
