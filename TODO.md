@@ -1,5 +1,3 @@
-[TODO] WARNING: The file OEBPS/page-template.xpgt has a MIME type that does not match its extension    [OEBPS/theworld.opf]
-
 [TODO] 
 WARNING: Invalid id: _RWTOC-25    [OEBPS/theworld_ack.html:11]
 WARNING: Invalid id: _RWTOC-32    [OEBPS/theworld_adc01.html:11]
@@ -83,6 +81,7 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] Fix Calibre/Epubcheck validation error: "WARNING: The file OEBPS/page-template.xpgt has a MIME type that does not match its extension". epub-shrink.py now automatically standardizes the media-type of manifest items in the OPF package document to match standard MIME types based on their file extension (e.g. .xpgt -> application/adobe-page-template+xml, .css -> text/css, .html/.xhtml -> application/xhtml+xml, images, fonts, and .ncx).
 - [x] Fix Calibre/Epubcheck validation error: "The meta cover tag has content before name" [OEBPS/theworld.opf:12]. epub-shrink.py now automatically intercepts `<meta name="cover">` and corrects the attribute order (name before content) during package modernization.
 - [x] Fix Google Play Books missing cover issue. When modernizing EPUB files, automatically ensure that the legacy EPUB 2 cover metadata tag (`<meta name="cover" content="[cover_id]" />`) is added to the package document if a cover-image manifest item exists. This guarantees that Google Play Books can successfully extract and display the cover thumbnail.
 - [x] Fix HTM-025: Non-registered URI scheme type found in href (e.g., `kindle:embed:` in `<li class="toc-front" id="cover" value="1"><a href="kindle:embed:0002?mime=image/jpg">`). Unregistered schemes are converted to `<span>` tags during asset modernization to maintain styling while removing validation errors.

@@ -604,12 +604,24 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
                     c_meta.set('content', cover_id)
 
 
-    # 6. Standardize Font Media Types
-    font_map = {
+    # 6. Standardize Manifest Item Media Types
+    media_type_map = {
         '.ttf': 'application/vnd.ms-opentype',
         '.otf': 'application/vnd.ms-opentype',
         '.woff': 'font/woff',
-        '.woff2': 'font/woff2'
+        '.woff2': 'font/woff2',
+        '.xpgt': 'application/adobe-page-template+xml',
+        '.css': 'text/css',
+        '.xhtml': 'application/xhtml+xml',
+        '.html': 'application/xhtml+xml',
+        '.htm': 'application/xhtml+xml',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.webp': 'image/webp',
+        '.ncx': 'application/x-dtbncx+xml'
     }
     for item in manifest.values():
         href = None
@@ -622,7 +634,7 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
         if not href: continue
         
         ext = os.path.splitext(href.lower())[1]
-        if ext in font_map:
+        if ext in media_type_map:
             # Robustly get current media-type
             current_type = None
             for attr, val in item.attrib.items():
@@ -630,9 +642,9 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
                     current_type = val
                     break
             
-            new_type = font_map[ext]
+            new_type = media_type_map[ext]
             if current_type != new_type:
-                print(f"Modernizing font media-type for {href}: {current_type} -> {new_type}")
+                print(f"Modernizing media-type for {href}: {current_type} -> {new_type}")
                 # Clean up all versions of media-type attribute to avoid duplicates
                 to_del = [a for a in item.attrib if a == 'media-type' or a.endswith('}media-type')]
                 for a in to_del: del item.attrib[a]
