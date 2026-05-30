@@ -281,6 +281,7 @@ def is_valid_xml_name_char(c):
         (0x30 <= o <= 0x39) or  # 0-9
         o == 0x5F or  # _
         (0x61 <= o <= 0x7A) or  # a-z
+        (0x41 <= o <= 0x5A) or  # A-Z
         o == 0xB7 or
         (0xC0 <= o <= 0xD6) or
         (0xD8 <= o <= 0xF6) or
@@ -296,6 +297,65 @@ def is_valid_xml_name_char(c):
         (0xFDF0 <= o <= 0xFFFD) or
         (0x10000 <= o <= 0xEFFFF)
     )
+
+
+def is_valid_xml_id(id_val):
+    """Check if an ID attribute value is a valid XML NCName."""
+    if not id_val:
+        return False
+    # Strip any leading/trailing whitespace or non-breaking spaces
+    stripped = id_val.strip(" \t\n\r\xa0\u200b\u200c\u200d")
+    if not stripped or len(stripped) != len(id_val):
+        return False
+    
+    # Check first character
+    first = stripped[0]
+    first_ord = ord(first)
+    is_letter_or_underscore = (
+        (0x61 <= first_ord <= 0x7A) or  # a-z
+        (0x41 <= first_ord <= 0x5A) or  # A-Z
+        first_ord == 0x5F               # _
+    )
+    if not is_letter_or_underscore:
+        return False
+        
+    # Check remaining characters
+    for c in stripped[1:]:
+        if not is_valid_xml_name_char(c):
+            return False
+    return True
+
+
+def sanitize_xml_id(id_val):
+    """Sanitize an invalid ID attribute to be a valid XML NCName."""
+    if not id_val:
+        return ""
+    # Strip leading/trailing whitespaces and non-breaking spaces
+    stripped = id_val.strip(" \t\n\r\xa0\u200b\u200c\u200d")
+    if not stripped:
+        return ""
+        
+    # Replace any invalid XML name characters with underscores
+    chars = []
+    for c in stripped:
+        if is_valid_xml_name_char(c):
+            chars.append(c)
+        else:
+            chars.append("_")
+    sanitized = "".join(chars)
+    
+    if sanitized:
+        first = sanitized[0]
+        first_ord = ord(first)
+        is_letter_or_underscore = (
+            (0x61 <= first_ord <= 0x7A) or  # a-z
+            (0x41 <= first_ord <= 0x5A) or  # A-Z
+            first_ord == 0x5F               # _
+        )
+        if not is_letter_or_underscore:
+            sanitized = "id_" + sanitized
+            
+    return sanitized
 
 
 def is_invalid_custom_data_attribute(attr_name):
@@ -512,6 +572,9 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
     ul_disc_needed = False
     html_items = [(h, i) for h, i in manifest.items() if i.get('media-type') == 'application/xhtml+xml']
     
+    # Store global ID mappings: id_mappings[file_href][old_id] = new_id
+    id_mappings = defaultdict(dict)
+    
     if html_items:
         pbar = tqdm(html_items, unit="file", desc="Modernizing assets", leave=True)
         for href, item in pbar:
@@ -523,6 +586,49 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
             try:
                 content = html_path.read_bytes()
                 soup = BeautifulSoup(content, 'lxml-xml')
+
+                # Pass 1: Sanitize IDs and update local links/ARIA attributes within the same file
+                local_id_map = {}
+                # Find all elements with an ID
+                for tag in soup.find_all(True, id=True):
+                    old_id = tag['id']
+                    if not is_valid_xml_id(old_id):
+                        new_id = sanitize_xml_id(old_id)
+                        if new_id and new_id != old_id:
+                            # Avoid collision with an existing valid ID
+                            temp_id = new_id
+                            existing_ids = {t.get('id') for t in soup.find_all(True, id=True) if t != tag}
+                            while temp_id in existing_ids:
+                                temp_id = f"{new_id}_{uuid.uuid4().hex[:4]}"
+                            new_id = temp_id
+
+                            tag['id'] = new_id
+                            local_id_map[old_id] = new_id
+                            id_mappings[href][old_id] = new_id
+                            modified = True
+                        elif not new_id:
+                            # If sanitized ID is completely empty, remove the ID attribute
+                            del tag['id']
+                            modified = True
+
+                if local_id_map:
+                    # Update local href references within the same file (e.g. href="#old_id")
+                    for a in soup.find_all(True, href=True):
+                        a_href = a['href']
+                        if a_href.startswith('#'):
+                            local_anchor = a_href[1:]
+                            if local_anchor in local_id_map:
+                                a['href'] = '#' + local_id_map[local_anchor]
+                                modified = True
+
+                    # Update local ARIA references within the same file
+                    for attr in ['aria-labelledby', 'aria-describedby']:
+                        for tag in soup.find_all(attrs={attr: True}):
+                            target_ids = tag[attr].split()
+                            new_target_ids = [local_id_map.get(tid, tid) for tid in target_ids]
+                            if new_target_ids != target_ids:
+                                tag[attr] = " ".join(new_target_ids)
+                                modified = True
 
                 # Ensure XHTML namespace (RSC-005)
                 html_tag = soup.find('html')
@@ -573,6 +679,63 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
             except Exception as e:
                 pbar.write(f"Warning: Error modernizing {href}: {e}")
         pbar.close()
+
+        # Pass 2: Update cross-file references across all HTML files
+        if id_mappings:
+            pbar_p2 = tqdm(html_items, unit="file", desc="Updating cross-file links", leave=True)
+            for href, item in pbar_p2:
+                html_path = opf_dir / unquote(href)
+                if not html_path.exists(): continue
+                
+                pbar_p2.set_postfix(file=href[-30:], refresh=False)
+                modified = False
+                try:
+                    content = html_path.read_bytes()
+                    soup = BeautifulSoup(content, 'lxml-xml')
+                    
+                    current_dir = os.path.dirname(href)
+                    
+                    for a in soup.find_all(True, href=True):
+                        a_href = a['href']
+                        if not a_href.startswith('#') and '#' in a_href:
+                            file_part, anchor_part = a_href.split('#', 1)
+                            target_rel_path = unquote(file_part)
+                            target_abs_path = os.path.normpath(os.path.join(current_dir, target_rel_path)) if current_dir else os.path.normpath(target_rel_path)
+                            
+                            if target_abs_path in id_mappings and anchor_part in id_mappings[target_abs_path]:
+                                new_anchor = id_mappings[target_abs_path][anchor_part]
+                                a['href'] = f"{file_part}#{new_anchor}"
+                                modified = True
+                                
+                    if modified:
+                        html_path.write_text(str(soup), encoding='utf-8')
+                except Exception as e:
+                    pbar_p2.write(f"Warning: Error updating references in {href}: {e}")
+            pbar_p2.close()
+
+            # Update NCX references
+            if ncx_path:
+                try:
+                    ncx_tree = ET.parse(str(ncx_path))
+                    ncx_root = ncx_tree.getroot()
+                    ncx_modified = False
+                    
+                    for content_tag in ncx_root.findall(".//{http://www.daisy.org/z3986/2005/ncx/}content"):
+                        src = content_tag.get('src')
+                        if src and '#' in src:
+                            file_part, anchor_part = src.split('#', 1)
+                            target_rel_path = unquote(file_part)
+                            target_abs_path = os.path.normpath(target_rel_path)
+                            if target_abs_path in id_mappings and anchor_part in id_mappings[target_abs_path]:
+                                new_anchor = id_mappings[target_abs_path][anchor_part]
+                                content_tag.set('src', f"{file_part}#{new_anchor}")
+                                ncx_modified = True
+                    
+                    if ncx_modified:
+                        ncx_tree.write(str(ncx_path), encoding="utf-8", xml_declaration=True)
+                        print("Updated invalid ID references in NCX document")
+                except Exception as e:
+                    print(f"Warning: Error updating NCX link references: {e}")
 
     # 4. Inject CSS for ul_disc if needed
     if ul_disc_needed:

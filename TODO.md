@@ -6,38 +6,6 @@
 [TODO] Cleanup: Remove unused `fonttools` dependency from pyproject.toml (declared but never imported)
 
 
-[TODO] 
-WARNING: Invalid id: _RWTOC-25    [OEBPS/theworld_ack.html:11]
-WARNING: Invalid id: _RWTOC-32    [OEBPS/theworld_adc01.html:11]
-WARNING: Invalid id: _RWTOC-31    [OEBPS/theworld_ata.html:11]
-WARNING: Invalid id: _RWTOC-1    [OEBPS/theworld_ch01.html:11]
-WARNING: Invalid id: _RWTOC-5    [OEBPS/theworld_ch03.html:11]
-WARNING: Invalid id: _RWTOC-7    [OEBPS/theworld_ch04.html:11]
-WARNING: Invalid id: _RWTOC-9    [OEBPS/theworld_ch05.html:11]
-WARNING: Invalid id: _RWTOC-10    [OEBPS/theworld_ch05.html:12]
-WARNING: Invalid id: _RWTOC-11    [OEBPS/theworld_ch06.html:11]
-WARNING: Invalid id: _RWTOC-15    [OEBPS/theworld_ch08.html:11]
-WARNING: Invalid id: _RWTOC-16    [OEBPS/theworld_ch08.html:12]
-WARNING: Invalid id: _RWTOC-19    [OEBPS/theworld_ch10.html:11]
-WARNING: Invalid id: _RWTOC-23    [OEBPS/theworld_ch12.html:11]
-WARNING: Invalid id: 0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0000.html:9]
-WARNING: Invalid id: 1T140-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0002_split_000.html:9]
-WARNING: Invalid id: 1T140-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0002_split_001.html:9]
-WARNING: Invalid id: 5N3C0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0006.html:9]
-WARNING: Invalid id: 9H5K0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0010.html:9]
-WARNING: Invalid id: 1BRPS0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0046.html:9]
-WARNING: Invalid id: 22O7C0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0070.html:9]
-WARNING: Invalid id: 2LQIK0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0090.html:9]
-WARNING: Invalid id: 3APV00-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0112.html:9]
-WARNING: Invalid id: 3VPBC0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0134.html:9]
-WARNING: Invalid id: 41MCG0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0136.html:9]
-WARNING: Invalid id: 4LN8A0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0157.html:9]
-WARNING: Invalid id: 55U1S0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0174.html:9]
-WARNING: Invalid id: 5N3C00-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0192.html:9]
-WARNING: Invalid id: 5SQFC0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0198.html:9]
-WARNING: Invalid id: 5TOVU0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0199.html:9]
-WARNING: Invalid id: 5UNGG0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0200.html:9]
-
 
 # Fix RSC-005: Nested `<a>` tags (`<a>` elements must not appear inside `<a>` elements). (Include a test case).
 
@@ -89,6 +57,7 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] Fix Invalid ID attributes: Automatically sanitize and correct all invalid XML/HTML ID attributes inside EPUB assets (stripping spaces/nbsp, replacing invalid chars with underscores, prepending 'id_' to digit-starts) and dynamically re-link all internal local and cross-chapter referencing links (including NCX toc and NAV maps) to maintain 100% link integrity.
 - [x] Refactor: Fix purge_unwanted_files() not updating the in-memory manifest dict (main() has to refresh it separately). Updated purge_unwanted_files() and remove_asset() to directly mutate the in-memory manifest dictionary, eliminating the redundant XML re-query and rebuild in main() entirely.
 - [x] Refactor: pngquant is checked at startup but not used. Integrated pngquant into the lossy PNG compression pipeline to achieve high-quality quantization (with alpha transparency preserved) and significantly smaller file sizes, falling back to Pillow's basic adaptive palette conversion if pngquant is not available.
 - [x] Refactor: Consolidate remove_from_spine(), remove_from_manifest(), and remove_file() into a single operation (they each independently search the manifest). Unified the three standalone functions into a single consolidated `remove_asset` helper, performing a single manifest lookup to resolve ID, update the spine XML, update the manifest XML, and remove the file from disk cleanly.
