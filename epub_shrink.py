@@ -276,6 +276,56 @@ def generate_nav_from_ncx(ncx_path, nav_path):
         print(f"Warning: Could not generate nav from NCX: {e}")
 
 
+def is_valid_xml_name_char(c):
+    o = ord(c)
+    return (
+        o == 0x2D or  # -
+        o == 0x2E or  # .
+        (0x30 <= o <= 0x39) or  # 0-9
+        o == 0x5F or  # _
+        (0x61 <= o <= 0x7A) or  # a-z
+        o == 0xB7 or
+        (0xC0 <= o <= 0xD6) or
+        (0xD8 <= o <= 0xF6) or
+        (0xF8 <= o <= 0x2FF) or
+        (0x300 <= o <= 0x37D) or
+        (0x37F <= o <= 0x1FFF) or
+        (0x200C <= o <= 0x200D) or
+        (0x203F <= o <= 0x2040) or
+        (0x2070 <= o <= 0x218F) or
+        (0x2C00 <= o <= 0x2FEF) or
+        (0x3001 <= o <= 0xD7FF) or
+        (0xF900 <= o <= 0xFDCF) or
+        (0xFDF0 <= o <= 0xFFFD) or
+        (0x10000 <= o <= 0xEFFFF)
+    )
+
+
+def is_invalid_custom_data_attribute(attr_name):
+    # Check if it starts with "data-" case-insensitively
+    if not attr_name.lower().startswith('data-'):
+        return False
+    
+    # Must have at least one character after the hyphen
+    if len(attr_name) <= 5:
+        return True
+    
+    # Must not contain ASCII uppercase letters
+    if any('A' <= c <= 'Z' for c in attr_name):
+        return True
+    
+    # Must not contain colon (as colons are for namespaces, and custom data attributes must be in no namespace)
+    if ':' in attr_name:
+        return True
+        
+    # Every character must be a valid XML Name character (excluding ASCII uppercase and colon, which are checked above)
+    for c in attr_name:
+        if not is_valid_xml_name_char(c):
+            return True
+            
+    return False
+
+
 def handle_deprecated(soup):
     """Convert deprecated HTML tags and attributes to modern CSS equivalents."""
     modified = False
@@ -342,6 +392,9 @@ def handle_deprecated(soup):
                     else:
                         tag['style'] = style
                 
+                attrs_to_remove.append(attr)
+                modified = True
+            elif is_invalid_custom_data_attribute(attr):
                 attrs_to_remove.append(attr)
                 modified = True
         

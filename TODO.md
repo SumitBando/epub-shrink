@@ -1,14 +1,8 @@
-# Fix RSC-005: Nested `<a>` tags (`<a>` elements must not appear inside `<a>` elements). (Include a test case).
+https://draft2digital.com/book/epubcheck/upload WARNING(HTM-025): /text/part0002_split_000.html(13,87): Non-registered URI scheme type found in href.
 
-# Fix validate image files
-ERROR: Invalid image: cannot identify image file <_io.BytesIO object at 0x000001A55E134360>    [EPUB/images/Federica_Bocco_Headshot.jpg]
+[TODO] ERROR: The meta cover tag has content before name    [OEBPS/theworld.opf:12]
 
-
-[TODO] 
-ERROR: The meta cover tag has content before name    [OEBPS/theworld.opf:12]
-
-[TODO] 
-WARNING: The file OEBPS/page-template.xpgt has a MIME type that does not match its extension    [OEBPS/theworld.opf]
+[TODO] WARNING: The file OEBPS/page-template.xpgt has a MIME type that does not match its extension    [OEBPS/theworld.opf]
 
 [TODO] 
 WARNING: Invalid id: _RWTOC-25    [OEBPS/theworld_ack.html:11]
@@ -24,6 +18,30 @@ WARNING: Invalid id: _RWTOC-15    [OEBPS/theworld_ch08.html:11]
 WARNING: Invalid id: _RWTOC-16    [OEBPS/theworld_ch08.html:12]
 WARNING: Invalid id: _RWTOC-19    [OEBPS/theworld_ch10.html:11]
 WARNING: Invalid id: _RWTOC-23    [OEBPS/theworld_ch12.html:11]
+WARNING: Invalid id: 0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0000.html:9]
+WARNING: Invalid id: 1T140-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0002_split_000.html:9]
+WARNING: Invalid id: 1T140-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0002_split_001.html:9]
+WARNING: Invalid id: 5N3C0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0006.html:9]
+WARNING: Invalid id: 9H5K0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0010.html:9]
+WARNING: Invalid id: 1BRPS0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0046.html:9]
+WARNING: Invalid id: 22O7C0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0070.html:9]
+WARNING: Invalid id: 2LQIK0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0090.html:9]
+WARNING: Invalid id: 3APV00-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0112.html:9]
+WARNING: Invalid id: 3VPBC0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0134.html:9]
+WARNING: Invalid id: 41MCG0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0136.html:9]
+WARNING: Invalid id: 4LN8A0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0157.html:9]
+WARNING: Invalid id: 55U1S0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0174.html:9]
+WARNING: Invalid id: 5N3C00-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0192.html:9]
+WARNING: Invalid id: 5SQFC0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0198.html:9]
+WARNING: Invalid id: 5TOVU0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0199.html:9]
+WARNING: Invalid id: 5UNGG0-5ee58a0d1c3149459c0c569fcfce5b24    [text/part0200.html:9]
+
+
+# Fix RSC-005: Nested `<a>` tags (`<a>` elements must not appear inside `<a>` elements). (Include a test case).
+
+# Fix validate image files
+[TODO] ERROR: Invalid image: cannot identify image file <_io.BytesIO object at 0x000001A55E134360>    [EPUB/images/Federica_Bocco_Headshot.jpg]
+
 
 [TODO] After processing still has:
 ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
@@ -66,5 +84,4 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 
   Removing the <guide> section eliminated this conflict, forcing the reader to use the modern, unambiguous EPUB 3 method to identify
   the cover image.
-
 - Check repo https://github.com/martinus/epuboptim
