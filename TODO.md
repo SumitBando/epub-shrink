@@ -1,3 +1,4 @@
+
 [TODO] 
 WARNING: Invalid id: _RWTOC-25    [OEBPS/theworld_ack.html:11]
 WARNING: Invalid id: _RWTOC-32    [OEBPS/theworld_adc01.html:11]
@@ -50,8 +51,6 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 
 - remove non-linear items from the spine if there are truly no references to them from any linear items, navigation, or the table of contents
 
-- The cover image has an id != "cover". Renaming to work around bug in Nook Color
-
 - Explanation https://www.perplexity.ai/search/explain-the-powershell-script-DfzSO_cRQbam2gU8d6Xuew
 
 
@@ -81,6 +80,7 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] Fix Calibre warning: "The cover image has an id != \"cover\". Renaming to work around bug in Nook Color". epub-shrink.py now automatically renames the cover image ID to "cover" during metadata modernization, resolving Nook Color compatibility issues and avoiding Calibre warnings. It handles any potential ID collisions with other manifest items and updates the spine references and legacy cover metadata accordingly.
 - [x] Fix Calibre/Epubcheck validation error: "WARNING: The file OEBPS/page-template.xpgt has a MIME type that does not match its extension". epub-shrink.py now automatically standardizes the media-type of manifest items in the OPF package document to match standard MIME types based on their file extension (e.g. .xpgt -> application/adobe-page-template+xml, .css -> text/css, .html/.xhtml -> application/xhtml+xml, images, fonts, and .ncx).
 - [x] Fix Calibre/Epubcheck validation error: "The meta cover tag has content before name" [OEBPS/theworld.opf:12]. epub-shrink.py now automatically intercepts `<meta name="cover">` and corrects the attribute order (name before content) during package modernization.
 - [x] Fix Google Play Books missing cover issue. When modernizing EPUB files, automatically ensure that the legacy EPUB 2 cover metadata tag (`<meta name="cover" content="[cover_id]" />`) is added to the package document if a cover-image manifest item exists. This guarantees that Google Play Books can successfully extract and display the cover thumbnail.

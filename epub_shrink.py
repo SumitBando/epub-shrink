@@ -439,6 +439,55 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
     # Remove obsolete <tours> element (RSC-005)
     for tours in opf_root.findall('opf:tours', ns):
         opf_root.remove(tours)
+
+    # 1.5 Cover Image ID Modernization (satisfy Calibre & Nook Color compatibility)
+    cover_item = None
+    # Search cover image via EPUB 3 properties
+    cover_item = next((item for item in manifest.values() if 'cover-image' in (item.get('properties') or '').split()), None)
+    
+    # If not found, search cover image via EPUB 2 legacy cover metadata
+    if cover_item is None:
+        metadata = opf_root.find('opf:metadata', ns)
+        if metadata is not None:
+            for meta in metadata.findall('.//opf:meta[@name="cover"]', ns):
+                c_id = meta.get('content')
+                if c_id:
+                    cover_item = next((item for item in manifest.values() if item.get('id') == c_id), None)
+                    if cover_item is not None:
+                        break
+
+    if cover_item is not None:
+        old_cover_id = cover_item.get('id')
+        if old_cover_id != 'cover':
+            print(f"Renaming cover image ID from '{old_cover_id}' to 'cover' to work around Nook Color bug and satisfy Calibre requirements.")
+            
+            # If another item already has ID "cover", we must rename it to avoid collision
+            other_cover_item = next((item for item in manifest.values() if item.get('id') == 'cover' and item != cover_item), None)
+            if other_cover_item is not None:
+                new_id = "cover-page"
+                existing_ids = {item.get('id') for item in manifest.values()}
+                while new_id in existing_ids:
+                    new_id = f"cover-page-{uuid.uuid4().hex[:4]}"
+                print(f"Renaming existing manifest item ID 'cover' (associated with {other_cover_item.get('href')}) to '{new_id}' to avoid collision.")
+                other_cover_item.set('id', new_id)
+                
+                # Update references in <spine> to the renamed item
+                spine = opf_root.find('opf:spine', ns)
+                if spine is not None:
+                    for itemref in spine.findall('opf:itemref', ns):
+                        if itemref.get('idref') == 'cover':
+                            itemref.set('idref', new_id)
+            
+            # Rename cover image's ID to 'cover'
+            cover_item.set('id', 'cover')
+            
+            # Ensure it has cover-image property in EPUB 3 style
+            props = cover_item.get('properties') or ''
+            prop_list = props.split()
+            if 'cover-image' not in prop_list:
+                prop_list.append('cover-image')
+                cover_item.set('properties', ' '.join(prop_list))
+                print(f"Added properties='cover-image' to cover item {cover_item.get('href')}")
     
     # 2. Ensure EPUB 3 navigation document
     nav_item = next((item for item in manifest.values() if 'nav' in (item.get('properties') or '').split()), None)
@@ -569,7 +618,7 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
                 
                 # Fix Calibre error "The meta cover tag has content before name"
                 if child.attrib.get('name') == 'cover' and 'content' in child.attrib:
-                    content_val = child.attrib.get('content')
+                    content_val = 'cover' if cover_item is not None else child.attrib.get('content')
                     child.attrib.clear()
                     child.attrib['name'] = 'cover'
                     child.attrib['content'] = content_val
