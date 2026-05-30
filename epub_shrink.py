@@ -951,12 +951,12 @@ def purge_unwanted_files(ctx: EpubContext, purge_patterns, extract_dir, content_
     for relative_filename in list(manifest.keys()):
         filename = os.path.basename(relative_filename)
         if any(fnmatch(filename, pat) for pat in all_patterns):
-            remove_asset(tree, content_dir, relative_filename)
+            remove_asset(tree, content_dir, relative_filename, manifest_dict=manifest)
             if show_summary:
                 print(f"Purged unwanted file: {relative_filename} from spine, manifest, and disk")
 
 
-def remove_asset(tree, content_dir, href):
+def remove_asset(tree, content_dir, href, manifest_dict=None):
     """Remove a file from the spine, manifest, and disk in a single operation."""
     try:
         # Find the manifest and spine elements in the OPF
@@ -986,6 +986,9 @@ def remove_asset(tree, content_dir, href):
         # Remove from XML manifest
         if manifest is not None:
             manifest.remove(item)
+            
+        if manifest_dict is not None and href in manifest_dict:
+            del manifest_dict[href]
             
         # Remove from disk
         file_path = content_dir / href
@@ -1312,9 +1315,6 @@ def main():
     # 2. Purge unwanted patterns
     purge_unwanted_files(ctx, args.purge, ctx.extract_dir, content_dir, tree, manifest, show_summary=True)
     
-    # Refresh manifest after purge
-    manifest = {item.attrib["href"]: item for item in tree.findall(".//opf:item", ns)}
-
     # 3. Modernize assets (convert deprecated tags, generate nav.xhtml, etc.)
     modernize_assets(ctx.extract_dir, tree, manifest, ns, opf_path)
 
