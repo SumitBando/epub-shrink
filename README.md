@@ -15,7 +15,7 @@ nix profile add nixpkgs#jpegoptim --extra-experimental-features nix-command --ex
 nix profile add nixpkgs#oxipng --extra-experimental-features nix-command --extra-experimental-features flakes
 ```
 
-## Run with venv
+## Run with old style venv
 ```bash
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt

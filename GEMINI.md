@@ -42,7 +42,7 @@ Always verify that your proposed change compiles.
 # Testing
 To smoke test, run the script `epub-shrink.py` with a test file:
 ```bash
-source venv/bin/activate && python epub-shrink.py tests/Songs.epub
+uv run epub_shrink.py tests/Songs.epub
 ```
 Running on `tests/Songs.epub`, the following files should be dropped:
 - `../promo.css`
