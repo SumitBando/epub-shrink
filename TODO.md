@@ -1,5 +1,3 @@
-[TODO] ERROR: The meta cover tag has content before name    [OEBPS/theworld.opf:12]
-
 [TODO] WARNING: The file OEBPS/page-template.xpgt has a MIME type that does not match its extension    [OEBPS/theworld.opf]
 
 [TODO] 

@@ -567,7 +567,15 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
                     if 'content' not in child.attrib:
                         child.set('content', val)
                 
+                # Fix Calibre error "The meta cover tag has content before name"
+                if child.attrib.get('name') == 'cover' and 'content' in child.attrib:
+                    content_val = child.attrib.get('content')
+                    child.attrib.clear()
+                    child.attrib['name'] = 'cover'
+                    child.attrib['content'] = content_val
+                
                 # Check for required attributes (name, property, or refines)
+
                 if not any(attr in child.attrib for attr in ['name', 'property', 'refines']):
                     print(f"Warning: Removing invalid <meta> tag missing required attributes in {opf_path.name}: {ET.tostring(child, encoding='unicode').strip()}")
                     metadata.remove(child)
