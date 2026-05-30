@@ -85,4 +85,6 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] Fix Google Play Books missing cover issue. When modernizing EPUB files, automatically ensure that the legacy EPUB 2 cover metadata tag (`<meta name="cover" content="[cover_id]" />`) is added to the package document if a cover-image manifest item exists. This guarantees that Google Play Books can successfully extract and display the cover thumbnail.
 - [x] Fix HTM-025: Non-registered URI scheme type found in href (e.g., `kindle:embed:` in `<li class="toc-front" id="cover" value="1"><a href="kindle:embed:0002?mime=image/jpg">`). Unregistered schemes are converted to `<span>` tags during asset modernization to maintain styling while removing validation errors.
+

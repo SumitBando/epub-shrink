@@ -581,6 +581,20 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
         mod = ET.SubElement(metadata, '{http://www.idpf.org/2007/opf}meta')
         mod.set('property', 'dcterms:modified')
         mod.text = now
+        
+        # Ensure legacy cover meta tag exists if there is a cover-image (Google Play Books compatibility)
+        cover_item = next((item for item in manifest.values() if 'cover-image' in (item.get('properties') or '').split()), None)
+        if cover_item is not None:
+            cover_id = cover_item.get('id')
+            if cover_id:
+                has_legacy_cover = any(meta.get('name') == 'cover' and meta.get('content') == cover_id 
+                                       for meta in metadata.findall('.//opf:meta', ns))
+                if not has_legacy_cover:
+                    print(f"Adding legacy cover meta tag for {cover_id} (Google Play Books compatibility)")
+                    c_meta = ET.SubElement(metadata, '{http://www.idpf.org/2007/opf}meta')
+                    c_meta.set('name', 'cover')
+                    c_meta.set('content', cover_id)
+
 
     # 6. Standardize Font Media Types
     font_map = {
