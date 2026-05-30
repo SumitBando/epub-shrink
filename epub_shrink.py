@@ -1101,16 +1101,28 @@ def compress_images(ctx: EpubContext, root, quality, jpg_paths, png_paths, webp_
                         img = Image.open(p)
                         img.save(p, format=img.format, optimize=True)
                 else:
-                    img = Image.open(p)
-                    fmt = img.format
-                    if fmt == "JPEG":
-                        img.save(p, format="JPEG", quality=quality, optimize=True, progressive=True)
-                    elif fmt == "PNG":
-                        # For lossy PNG, convert to palette-based image
-                        img = img.convert("P", palette=Image.ADAPTIVE)
-                        img.save(p, format="PNG", optimize=True)
+                    if img_type == "PNG":
+                        if shutil.which("pngquant"):
+                            pngquant_args = [
+                                "pngquant",
+                                "--force",
+                                "--skip-if-larger",
+                                "--ext", ".png",
+                                "--quality", f"{max(0, quality-10)}-{quality}",
+                                str(p)
+                            ]
+                            subprocess.run(pngquant_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        else:
+                            img = Image.open(p)
+                            img = img.convert("P", palette=Image.ADAPTIVE)
+                            img.save(p, format="PNG", optimize=True)
                     else:
-                        img.save(p, format=fmt, quality=quality, optimize=True)
+                        img = Image.open(p)
+                        fmt = img.format
+                        if fmt == "JPEG":
+                            img.save(p, format="JPEG", quality=quality, optimize=True, progressive=True)
+                        else:
+                            img.save(p, format=fmt, quality=quality, optimize=True)
             except Exception as e:
                 if ctx.verbose:
                     pbar.write(f"Image compress error: {p} {e}")

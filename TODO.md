@@ -1,7 +1,6 @@
 
 [TODO] Refactor: Fix purge_unwanted_files() not updating the in-memory manifest dict (main() has to refresh it separately at L1324)
 
-[TODO] Refactor: `pngquant` is checked at startup but not used(Pillow palette conversion is used instead). Check if pngquant should should be used in some cases, or remove from import and .toml 
 
 [TODO] Refactor: Split handle_deprecated() god-function — separate deprecated tags, deprecated attrs, invalid data-attrs, `<a name>` → `<a id>`, URI scheme validation, and `<meta>`/`<epub:trigger>` cleanup into individual functions
 
@@ -93,6 +92,7 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] Refactor: pngquant is checked at startup but not used. Integrated pngquant into the lossy PNG compression pipeline to achieve high-quality quantization (with alpha transparency preserved) and significantly smaller file sizes, falling back to Pillow's basic adaptive palette conversion if pngquant is not available.
 - [x] Refactor: Consolidate remove_from_spine(), remove_from_manifest(), and remove_file() into a single operation (they each independently search the manifest). Unified the three standalone functions into a single consolidated `remove_asset` helper, performing a single manifest lookup to resolve ID, update the spine XML, update the manifest XML, and remove the file from disk cleanly.
 - [x] Refactor: Replace 7 GLOBAL_* variables with an EpubContext dataclass threaded through the pipeline. Replaced the 8 GLOBAL_* variables (both used and unused dead code) with an EpubContext dataclass threaded cleanly through all pipeline functions (unzip, load_opf, analyze_file, purge_unwanted_files, remove_unreferenced, analyze_images, compress_images, analyze_image_quality, and prune_unreferenced_assets).
 - [x] Fix Calibre warning: "The cover image has an id != \"cover\". Renaming to work around bug in Nook Color". epub-shrink.py now automatically renames the cover image ID to "cover" during metadata modernization, resolving Nook Color compatibility issues and avoiding Calibre warnings. It handles any potential ID collisions with other manifest items and updates the spine references and legacy cover metadata accordingly.
