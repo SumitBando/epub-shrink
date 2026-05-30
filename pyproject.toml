@@ -10,11 +10,14 @@ description = "Shrink EPUB files by removing unused assets and compressing image
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+    "beautifulsoup4",
+    "lxml",
     "tinycss2",
     "pillow",
     "fonttools",
     "tqdm",
+    "pytest",
 ]
 
 [project.scripts]
-epub-shrink = "epub-shrink:main"
+epub-shrink = "epub_shrink:main"
