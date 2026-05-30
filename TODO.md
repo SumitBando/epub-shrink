@@ -1,6 +1,25 @@
 
+[TODO] Refactor: Split epub_shrink.py into modules — extract.py, purge.py, images.py, reference.py, modernize/ (cover.py, navigation.py, html.py, metadata.py, manifest.py)
+
+[TODO] Refactor: Split handle_deprecated() god-function — separate deprecated tags, deprecated attrs, invalid data-attrs, `<a name>` → `<a id>`, URI scheme validation, and `<meta>`/`<epub:trigger>` cleanup into individual functions
+
+[TODO] Refactor: Split modernize_assets() god-function (~315 lines, 8 sub-steps) into separate callable functions
+
+[TODO] Refactor: Consolidate remove_from_spine(), remove_from_manifest(), and remove_file() into a single operation (they each independently search the manifest)
+
+[TODO] Refactor: Fix purge_unwanted_files() not updating the in-memory manifest dict (main() has to refresh it separately at L1324)
+
+[TODO] Cleanup: Remove unused `fonttools` dependency from pyproject.toml (declared but never imported)
+
+[TODO] Cleanup: Remove `pngquant` startup check — it is verified at startup but never invoked (Pillow palette conversion is used instead)
+
+[TODO] Feature: Add `--no-compress` CLI flag to skip image compression (fix/prune only)
+
+[TODO] Feature: Add `--epub2` CLI flag to skip EPUB 3 upgrade
+
+
 [TODO] 
-WARNING: Invalid id: _RWTOC-25    [OEBPS/theworld_ack.html:11]
+WARNING: Invalid id: _RWTOC-25    [OEBPS/theworld_ack.html:11]
 WARNING: Invalid id: _RWTOC-32    [OEBPS/theworld_adc01.html:11]
 WARNING: Invalid id: _RWTOC-31    [OEBPS/theworld_ata.html:11]
 WARNING: Invalid id: _RWTOC-1    [OEBPS/theworld_ch01.html:11]
@@ -80,6 +99,7 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] Refactor: Replace 7 GLOBAL_* variables with an EpubContext dataclass threaded through the pipeline. Replaced the 8 GLOBAL_* variables (both used and unused dead code) with an EpubContext dataclass threaded cleanly through all pipeline functions (unzip, load_opf, analyze_file, purge_unwanted_files, remove_unreferenced, analyze_images, compress_images, analyze_image_quality, and prune_unreferenced_assets).
 - [x] Fix Calibre warning: "The cover image has an id != \"cover\". Renaming to work around bug in Nook Color". epub-shrink.py now automatically renames the cover image ID to "cover" during metadata modernization, resolving Nook Color compatibility issues and avoiding Calibre warnings. It handles any potential ID collisions with other manifest items and updates the spine references and legacy cover metadata accordingly.
 - [x] Fix Calibre/Epubcheck validation error: "WARNING: The file OEBPS/page-template.xpgt has a MIME type that does not match its extension". epub-shrink.py now automatically standardizes the media-type of manifest items in the OPF package document to match standard MIME types based on their file extension (e.g. .xpgt -> application/adobe-page-template+xml, .css -> text/css, .html/.xhtml -> application/xhtml+xml, images, fonts, and .ncx).
 - [x] Fix Calibre/Epubcheck validation error: "The meta cover tag has content before name" [OEBPS/theworld.opf:12]. epub-shrink.py now automatically intercepts `<meta name="cover">` and corrects the attribute order (name before content) during package modernization.

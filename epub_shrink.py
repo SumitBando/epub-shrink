@@ -25,6 +25,7 @@ import uuid
 import html
 from urllib.parse import unquote, urlparse
 from collections import defaultdict
+from dataclasses import dataclass
 from lxml import etree as ET
 from fnmatch import fnmatch
 from PIL import Image
@@ -62,14 +63,14 @@ DEPRECATED_ITEMS = {
 
 TMP_ROOT = pathlib.Path(tempfile.gettempdir())
 
-GLOBAL_EXTRACT_DIR = None
-GLOBAL_OPF_PATH = None
-GLOBAL_TREE = None
-GLOBAL_MANIFEST = None
-GLOBAL_NS = None
-GLOBAL_KEEP_FILES = None
-GLOBAL_INPUT_FILE = None
-GLOBAL_VERBOSE = False
+
+@dataclass
+class EpubContext:
+    """Context object threaded through the EPUB shrinking pipeline."""
+    input_file: pathlib.Path
+    extract_dir: pathlib.Path
+    verbose: bool = False
+
 
 
 def verify_compressors_availability():
@@ -115,27 +116,23 @@ def parse_args():
     return args
 
 
-def unzip() -> pathlib.Path:
-    global GLOBAL_INPUT_FILE, GLOBAL_EXTRACT_DIR
+def unzip(ctx: EpubContext):
     """Extract the EPUB to a new temporary directory."""
-    GLOBAL_EXTRACT_DIR = TMP_ROOT / f"epub-shrink-{os.getpid()}"
-    print(f"Extracting {GLOBAL_INPUT_FILE} to temporary directory {GLOBAL_EXTRACT_DIR}")
-    if GLOBAL_EXTRACT_DIR.exists():
-        shutil.rmtree(GLOBAL_EXTRACT_DIR)
-    GLOBAL_EXTRACT_DIR.mkdir()
-    zipfile.ZipFile(GLOBAL_INPUT_FILE).extractall(GLOBAL_EXTRACT_DIR)
-    return GLOBAL_EXTRACT_DIR
+    print(f"Extracting {ctx.input_file} to temporary directory {ctx.extract_dir}")
+    if ctx.extract_dir.exists():
+        shutil.rmtree(ctx.extract_dir)
+    ctx.extract_dir.mkdir()
+    zipfile.ZipFile(ctx.input_file).extractall(ctx.extract_dir)
 
 
-def load_opf():
+def load_opf(ctx: EpubContext):
     """Find and load the 'Open Package Format' file using container.xml or fallback to direct search. 
     
     According to the EPUB spec, META-INF/container.xml points to the OPF file.
     If container.xml isn't found or doesn't contain a valid reference,
     fall back to searching for .opf files directly.
     """
-    global GLOBAL_EXTRACT_DIR
-    container_path = GLOBAL_EXTRACT_DIR / "META-INF" / "container.xml"
+    container_path = ctx.extract_dir / "META-INF" / "container.xml"
     opf_path = None
     
     # First try to find the OPF file from container.xml
@@ -151,7 +148,7 @@ def load_opf():
                 if rootfile.get("media-type") == "application/oebps-package+xml":
                     opf_path_str = rootfile.get("full-path")
                     if opf_path_str:
-                        opf_path = GLOBAL_EXTRACT_DIR / opf_path_str
+                        opf_path = ctx.extract_dir / opf_path_str
                         if opf_path.exists():
                             break
         except Exception as e:
@@ -161,8 +158,8 @@ def load_opf():
     # Fallback: If container.xml parsing fails, search for .opf files directly
     if not opf_path or not opf_path.exists():
         try:
-            opf_path = next(GLOBAL_EXTRACT_DIR.rglob("*.opf"))
-            print(f"Using fallback OPF file: {opf_path.relative_to(GLOBAL_EXTRACT_DIR)}")
+            opf_path = next(ctx.extract_dir.rglob("*.opf"))
+            print(f"Using fallback OPF file: {opf_path.relative_to(ctx.extract_dir)}")
         except StopIteration:
             raise FileNotFoundError("No .opf file found in the EPUB")
     
@@ -767,8 +764,7 @@ def extract_refs(tokens, is_import=False):
     return refs
 
 
-def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary=True):
-    global GLOBAL_VERBOSE
+def remove_unreferenced(ctx: EpubContext, manifest, tree, ns, root, content_dir=None, show_summary=True):
     
     # 1. Initialize files_to_keep with essential references
     spine_refs = {item.attrib["idref"] for item in tree.findall(".//opf:itemref", ns)}
@@ -901,11 +897,11 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
                                     seen_queued.add(content_relative_path)
                                     pbar.total += 1
                 except Exception as e:
-                    if GLOBAL_VERBOSE:
+                    if ctx.verbose:
                         pbar.write(f"Error parsing CSS {href}: {e}")
 
         except Exception as e:
-            if GLOBAL_VERBOSE:
+            if ctx.verbose:
                 pbar.write(f"Error scanning file {href}: {e}")
         
         pbar.update(1)
@@ -920,7 +916,7 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
         if href not in files_to_keep:
             file_path = content_dir / href
             if not file_path.exists():
-                if GLOBAL_VERBOSE:
+                if ctx.verbose:
                     print(f"File to remove not found on disk: {href}")
                 continue
             size = file_path.stat().st_size
@@ -935,9 +931,8 @@ def remove_unreferenced(manifest, tree, ns, root, content_dir=None, show_summary
                 print(f"Dropping unreferenced file: {href} ({human(size)})")
 
 
-def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifest, show_summary=True):
-    global GLOBAL_VERBOSE
-    if GLOBAL_VERBOSE and show_summary:
+def purge_unwanted_files(ctx: EpubContext, purge_patterns, extract_dir, content_dir, tree, manifest, show_summary=True):
+    if ctx.verbose and show_summary:
         print("Purging unwanted files...")
     DEFAULT_PURGES = [
         "*.DS_Store",
@@ -963,7 +958,6 @@ def purge_unwanted_files(purge_patterns, extract_dir, content_dir, tree, manifes
                 print(f"Purged unwanted file: {relative_filename} from spine, manifest, and disk")
 
 def remove_from_spine(tree, href):
-    global GLOBAL_VERBOSE
     try:
         # Find the manifest item with the matching href
         manifest = tree.find("{http://www.idpf.org/2007/opf}manifest")
@@ -1024,7 +1018,7 @@ def remove_file(content_dir, href):
         raise
 
 
-def analyze_images(root, show_summary=True):
+def analyze_images(ctx: EpubContext, root, show_summary=True):
     """Find all image paths relative to root and optionally print a summary."""
     jpg_paths = [p.relative_to(root) for p in [*root.rglob("*.jpg"), *root.rglob("*.jpeg")]]
     png_paths = [p.relative_to(root) for p in root.rglob("*.png")]
@@ -1055,7 +1049,7 @@ def analyze_images(root, show_summary=True):
                 full_path = root / p
                 pbar.set_postfix(file=p.name[-30:], refresh=False)
                 size += full_path.stat().st_size
-                info = analyze_image_quality(full_path)
+                info = analyze_image_quality(ctx, full_path)
                 q = info.get("estimated_quality")
                 if q:
                     type_max_q = max(type_max_q, q)
@@ -1077,8 +1071,7 @@ def analyze_images(root, show_summary=True):
     return jpg_paths, png_paths, webp_paths, max_estimated_quality
 
 
-def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
-    global GLOBAL_VERBOSE
+def compress_images(ctx: EpubContext, root, quality, jpg_paths, png_paths, webp_paths):
     
     savings = []
     
@@ -1109,8 +1102,8 @@ def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
             total_before += before
             
             image_info = None
-            if GLOBAL_VERBOSE:
-                image_info = analyze_image_quality(p)
+            if ctx.verbose:
+                image_info = analyze_image_quality(ctx, p)
                 
             try:
                 if quality == 100:
@@ -1136,14 +1129,14 @@ def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
                     else:
                         img.save(p, format=fmt, quality=quality, optimize=True)
             except Exception as e:
-                if GLOBAL_VERBOSE:
+                if ctx.verbose:
                     pbar.write(f"Image compress error: {p} {e}")
             
             after = p.stat().st_size
             total_after += after
             savings.append((before, after))
             
-            if GLOBAL_VERBOSE:
+            if ctx.verbose:
                 reduction_pct = (before - after) / before * 100 if before > 0 else 0
                 if image_info and 'error' not in image_info:
                     fmt = image_info['format']
@@ -1171,16 +1164,16 @@ def compress_images(root, quality, jpg_paths, png_paths, webp_paths):
     return savings
 
 
-def analyze_image_quality(path: pathlib.Path):
+def analyze_image_quality(ctx: EpubContext, path: pathlib.Path):
     """Analyze the quality of an image file.
     
     Args:
+        ctx: EpubContext object
         path: Path to the image file
         
     Returns:
         A tuple of (image format, estimated quality, color mode, dimensions)
     """
-    global GLOBAL_VERBOSE
     try:
         img = Image.open(path)
         fmt = img.format
@@ -1212,7 +1205,7 @@ def analyze_image_quality(path: pathlib.Path):
                                     # Rough formula, inversely proportional to average quantization value
                                     estimated_quality = min(100, max(1, int(100 - (avg_qtable / 2.5))))
             except Exception as e:
-                if GLOBAL_VERBOSE:
+                if ctx.verbose:
                     print(f"Error estimating JPEG quality: {e}")
                     
         # For PNG, check color type and bit depth
@@ -1251,7 +1244,7 @@ def analyze_image_quality(path: pathlib.Path):
                     "software": software
                 }
             except Exception as e:
-                if GLOBAL_VERBOSE:
+                if ctx.verbose:
                     print(f"Error getting PNG info: {e}")
                 
         # Calculate file size
@@ -1267,7 +1260,7 @@ def analyze_image_quality(path: pathlib.Path):
         }
         
     except Exception as e:
-        if GLOBAL_VERBOSE:
+        if ctx.verbose:
             print(f"Error analyzing image {path}: {e}")
         return {
             "format": "unknown",
@@ -1290,49 +1283,53 @@ def rebuild_epub(root: pathlib.Path, out_path: pathlib.Path):
             z.write(file, file.relative_to(root), compress_type=zipfile.ZIP_DEFLATED)
         pbar.close()
 
-def analyze_file():
+def analyze_file(ctx: EpubContext):
     """Extract EPUB and load metadata."""
-    extract_dir = unzip()
-    opf_path, tree, manifest, ns = load_opf()
-    return extract_dir, opf_path, tree, manifest, ns
+    unzip(ctx)
+    opf_path, tree, manifest, ns = load_opf(ctx)
+    return opf_path, tree, manifest, ns
 
 
-def prune_unreferenced_assets(tree, manifest, ns, extract_dir, opf_path, show_summary=True):
+def prune_unreferenced_assets(ctx: EpubContext, tree, manifest, ns, opf_path, show_summary=True):
     """Remove unreferenced assets and write the updated OPF."""
     content_dir = opf_path.parent
-    remove_unreferenced(manifest, tree, ns, extract_dir, content_dir, show_summary=show_summary)
+    remove_unreferenced(ctx, manifest, tree, ns, ctx.extract_dir, content_dir, show_summary=show_summary)
     tree.write(opf_path, encoding="utf-8", xml_declaration=True)
 
 
 def main():
-    global GLOBAL_INPUT_FILE, GLOBAL_VERBOSE
     verify_compressors_availability()
     args = parse_args()
-    GLOBAL_INPUT_FILE = args.epub
-    GLOBAL_VERBOSE = args.verbose
-    original_size = GLOBAL_INPUT_FILE.stat().st_size
+    
+    extract_dir = TMP_ROOT / f"epub-shrink-{os.getpid()}"
+    ctx = EpubContext(
+        input_file=args.epub,
+        extract_dir=extract_dir,
+        verbose=args.verbose
+    )
+    original_size = ctx.input_file.stat().st_size
     print("Original size:", human(original_size))
 
     # 1. Analyze and Prepare
-    extract_dir, opf_path, tree, manifest, ns = analyze_file()
+    opf_path, tree, manifest, ns = analyze_file(ctx)
     content_dir = opf_path.parent
 
     # 2. Purge unwanted patterns
-    purge_unwanted_files(args.purge, extract_dir, content_dir, tree, manifest, show_summary=True)
+    purge_unwanted_files(ctx, args.purge, ctx.extract_dir, content_dir, tree, manifest, show_summary=True)
     
     # Refresh manifest after purge
     manifest = {item.attrib["href"]: item for item in tree.findall(".//opf:item", ns)}
 
     # 3. Modernize assets (convert deprecated tags, generate nav.xhtml, etc.)
-    modernize_assets(extract_dir, tree, manifest, ns, opf_path)
+    modernize_assets(ctx.extract_dir, tree, manifest, ns, opf_path)
 
     # 4. Prune unreferenced assets and update OPF
-    if GLOBAL_VERBOSE:
+    if ctx.verbose:
         print("Performing reference analysis...")
-    prune_unreferenced_assets(tree, manifest, ns, extract_dir, opf_path, show_summary=True)
+    prune_unreferenced_assets(ctx, tree, manifest, ns, opf_path, show_summary=True)
 
     # 5. Image Analysis (Discovery and Summary)
-    jpg_paths, png_paths, webp_paths, max_estimated_quality = analyze_images(extract_dir, show_summary=True)
+    jpg_paths, png_paths, webp_paths, max_estimated_quality = analyze_images(ctx, ctx.extract_dir, show_summary=True)
 
     # 6. Iterative Compression and Rebuild
     q = args.quality
@@ -1344,16 +1341,16 @@ def main():
         build_dir = TMP_ROOT / f"epub-build-{os.getpid()}-{q}"
         if build_dir.exists():
             shutil.rmtree(build_dir)
-        shutil.copytree(extract_dir, build_dir)
+        shutil.copytree(ctx.extract_dir, build_dir)
 
         # Determine output path for this iteration if not explicitly provided
         if args.output:
             current_out = args.output
         else:
             suffix = "-lossless" if q == 100 else f"-q{q}"
-            current_out = GLOBAL_INPUT_FILE.with_stem(f"{GLOBAL_INPUT_FILE.stem}{suffix}")
+            current_out = ctx.input_file.with_stem(f"{ctx.input_file.stem}{suffix}")
 
-        compress_images(build_dir, q, jpg_paths, png_paths, webp_paths)
+        compress_images(ctx, build_dir, q, jpg_paths, png_paths, webp_paths)
         rebuild_epub(build_dir, current_out)
         
         final_size = current_out.stat().st_size
@@ -1394,8 +1391,8 @@ def main():
     print(f"\nFinal size: {human(final_size)} (saved {(original_size - final_size) / original_size:.1%}) of original {human(original_size)}")
     print(f"Output file: {current_out}")
     
-    if extract_dir.exists():
-        shutil.rmtree(extract_dir)
+    if ctx.extract_dir.exists():
+        shutil.rmtree(ctx.extract_dir)
 
 
 if __name__ == "__main__":
