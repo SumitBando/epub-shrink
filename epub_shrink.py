@@ -951,68 +951,51 @@ def purge_unwanted_files(ctx: EpubContext, purge_patterns, extract_dir, content_
     for relative_filename in list(manifest.keys()):
         filename = os.path.basename(relative_filename)
         if any(fnmatch(filename, pat) for pat in all_patterns):
-            remove_from_spine(tree, relative_filename)
-            remove_from_manifest(tree, relative_filename)
-            remove_file(content_dir, relative_filename)
+            remove_asset(tree, content_dir, relative_filename)
             if show_summary:
                 print(f"Purged unwanted file: {relative_filename} from spine, manifest, and disk")
 
-def remove_from_spine(tree, href):
+
+def remove_asset(tree, content_dir, href):
+    """Remove a file from the spine, manifest, and disk in a single operation."""
     try:
-        # Find the manifest item with the matching href
+        # Find the manifest and spine elements in the OPF
         manifest = tree.find("{http://www.idpf.org/2007/opf}manifest")
-        item = None
+        spine = tree.find("{http://www.idpf.org/2007/opf}spine")
         
-        # Search all items for the matching href
-        for manifest_item in manifest.findall("*"):
-            if manifest_item.get("href") == href:
-                item = manifest_item
-                break
-                
+        item = None
+        if manifest is not None:
+            # Search all items for the matching href
+            for manifest_item in manifest.findall("*"):
+                if manifest_item.get("href") == href:
+                    item = manifest_item
+                    break
+        
         if item is None:
             print(f"Warning: Could not find manifest item with href '{href}'")
             return
             
-        # Get the item's id
+        # Get the item's id and remove from spine
         item_id = item.get("id")
-        
-        # Find and remove the corresponding spine itemref
-        spine = tree.find("{http://www.idpf.org/2007/opf}spine")
-        for itemref in list(spine):
-            if itemref.get("idref") == item_id:
-                spine.remove(itemref)
-                break
-    except Exception as e:
-        print(f"Warning: Could not remove {href} from spine: {e}")
-
-def remove_from_manifest(tree, href):
-    try:
-        parent = tree.getroot()
-        # from root, get manifest, then iterate through manifest items to find the one to remove
-        manifest = parent.find("{http://www.idpf.org/2007/opf}manifest")
-        for item in list(manifest):
-            if item.get("href") == href:
-                manifest.remove(item)
-                break
-    except Exception as e:
-        print(f"Warning: Could not remove {href} from manifest: {e}")
-
-def remove_file(content_dir, href):
-    """Remove a file from the content directory."""
-    # Use content_dir if available, otherwise fall back to extract_dir
-    # if content_dir:
-    #     (content_dir / href).unlink(missing_ok=True)
-    # else:
-    #     (extract_dir / href).unlink(missing_ok=True)
-
-    file_path = content_dir / href
-    if not file_path.exists():
-        error_message = f"File not found, could not remove: {href}"
-        print(error_message)
-        raise FileNotFoundError(error_message)
-    
-    try:
+        if item_id and spine is not None:
+            for itemref in list(spine):
+                if itemref.get("idref") == item_id:
+                    spine.remove(itemref)
+                    break
+                    
+        # Remove from XML manifest
+        if manifest is not None:
+            manifest.remove(item)
+            
+        # Remove from disk
+        file_path = content_dir / href
+        if not file_path.exists():
+            error_message = f"File not found, could not remove: {href}"
+            print(error_message)
+            raise FileNotFoundError(error_message)
+            
         file_path.unlink()
+        
     except Exception as e:
         print(f"Warning: Could not remove {href}: {e}")
         raise
