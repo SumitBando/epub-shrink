@@ -1458,6 +1458,70 @@ def prune_unreferenced_assets(ctx: EpubContext, tree, manifest, ns, opf_path, sh
     tree.write(opf_path, encoding="utf-8", xml_declaration=True)
 
 
+def estimate_next_quality(
+    history: list[tuple[int, int]],
+    target_bytes: int,
+    ratio: float,
+    max_estimated_quality: int,
+    min_quality: int = 15
+) -> int:
+    """
+    Estimate the next quality value based on history of runs using Secant Method (linear interpolation).
+    Clamps the quality drop to ensure it strictly decreases by at least 2 points,
+    drops by at most 25 points, and never goes below min_quality.
+    """
+    q_curr, size_curr = history[-1]
+    
+    if len(history) < 2:
+        # First lossy pass: we don't have 2 data points yet
+        if q_curr == 100:
+            if ratio > 2.0:
+                q_next = 80
+            elif max_estimated_quality > 0:
+                q_next = min(99, max_estimated_quality - 1)
+            else:
+                q_next = 95
+        else:
+            # If started at custom q < 100
+            if ratio > 2.0:
+                q_next = q_curr - 15
+            else:
+                q_next = q_curr - 5
+    else:
+        # We have at least 2 data points: use the Secant Method
+        q_prev, size_prev = history[-2]
+        
+        size_diff = size_curr - size_prev
+        q_diff = q_curr - q_prev
+        
+        if size_diff != 0 and q_diff != 0:
+            # Linear interpolation estimate
+            slope = size_diff / q_diff
+            q_est = q_curr - (size_curr - target_bytes) / slope
+            q_next = int(round(q_est))
+        else:
+            # Fallback if division by zero or no size change
+            if ratio > 2.0:
+                q_next = q_curr - 15
+            elif ratio > 1.5:
+                q_next = q_curr - 10
+            else:
+                q_next = q_curr - 5
+                
+    # Clamping & safety bounds
+    # 1. Ensure we strictly decrease quality (at least a drop of 2)
+    q_next = min(q_curr - 2, q_next)
+    
+    # 2. Limit the maximum drop in a single step to 25 to avoid overshooting
+    MAX_DROP = 25
+    q_next = max(q_curr - MAX_DROP, q_next)
+    
+    # 3. Ensure we don't drop below the minimum quality floor
+    q_next = max(min_quality, q_next)
+    
+    return q_next
+
+
 def main():
     verify_compressors_availability()
     args = parse_args()
@@ -1493,6 +1557,7 @@ def main():
     q = args.quality
     final_size = 0
     current_out = None
+    history = []
 
     while True:
         # Create a fresh build directory from the cleaned extract_dir
@@ -1514,6 +1579,9 @@ def main():
         final_size = current_out.stat().st_size
         print(f"Quality {q}: {human(final_size)}")
 
+        # Record this run
+        history.append((q, final_size))
+
         # Clean up build directory
         shutil.rmtree(build_dir)
 
@@ -1527,24 +1595,7 @@ def main():
         target_bytes = args.targetsize * 1024 * 1024
         ratio = final_size / target_bytes
         
-        if q == 100: 
-            # First lossy pass: if way over target, jump to 80, otherwise use max_estimated_quality
-            if ratio > 2.0:
-                q = 90
-            elif max_estimated_quality > 0:
-                q = min(99, max_estimated_quality - 1)
-            else:
-                q = 95
-        else:
-            if ratio > 2.0:
-                q -= 10
-            elif ratio > 1.5:
-                q -= 5
-            else:
-                q -= 2
-        
-        # Ensure we don't drop below minimum or stay at same quality
-        q = max(MIN_QUALITY, q)
+        q = estimate_next_quality(history, target_bytes, ratio, max_estimated_quality, MIN_QUALITY)
 
     print(f"\nFinal size: {human(final_size)} (saved {(original_size - final_size) / original_size:.1%}) of original {human(original_size)}")
     print(f"Output file: {current_out}")
