@@ -23,7 +23,7 @@ import os
 import datetime
 import uuid
 import html
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 from collections import defaultdict
 from lxml import etree as ET
 from fnmatch import fnmatch
@@ -407,6 +407,23 @@ def handle_deprecated(soup):
             a['id'] = a['name']
         del a['name']
         modified = True
+
+    # Handle non-registered URI schemes (HTM-025)
+    # EPUB 3 only permits standard/approved schemes (http, https, mailto, tel, data, urn, etc.) or relative paths.
+    # Unregistered schemes are converted to <span> to preserve content and styling without validation issues.
+    APPROVED_SCHEMES = {'http', 'https', 'mailto', 'tel', 'data', 'urn', 'ftp', 'geo', 'sms'}
+    for a in soup.find_all('a', attrs={'href': True}):
+        href = a['href']
+        try:
+            parsed = urlparse(href)
+            scheme = parsed.scheme
+            if scheme:
+                if scheme.lower() not in APPROVED_SCHEMES:
+                    a.name = 'span'
+                    del a['href']
+                    modified = True
+        except Exception:
+            pass
 
     return modified
 

@@ -1,5 +1,3 @@
-https://draft2digital.com/book/epubcheck/upload WARNING(HTM-025): /text/part0002_split_000.html(13,87): Non-registered URI scheme type found in href.
-
 [TODO] ERROR: The meta cover tag has content before name    [OEBPS/theworld.opf:12]
 
 [TODO] WARNING: The file OEBPS/page-template.xpgt has a MIME type that does not match its extension    [OEBPS/theworld.opf]
@@ -85,3 +83,6 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
   Removing the <guide> section eliminated this conflict, forcing the reader to use the modern, unambiguous EPUB 3 method to identify
   the cover image.
 - Check repo https://github.com/martinus/epuboptim
+
+# Completed tasks
+- [x] Fix HTM-025: Non-registered URI scheme type found in href (e.g., `kindle:embed:` in `<li class="toc-front" id="cover" value="1"><a href="kindle:embed:0002?mime=image/jpg">`). Unregistered schemes are converted to `<span>` tags during asset modernization to maintain styling while removing validation errors.
