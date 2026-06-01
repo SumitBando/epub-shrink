@@ -383,11 +383,9 @@ def is_invalid_custom_data_attribute(attr_name):
     return False
 
 
-def handle_deprecated(soup):
-    """Convert deprecated HTML tags and attributes to modern CSS equivalents."""
+def cleanup_meta_and_triggers(soup):
+    """Remove obsolete meta tags and epub:trigger elements."""
     modified = False
-    
-    # Handle obsolete meta tags
     for meta in soup.find_all('meta'):
         http_equiv = meta.get('http-equiv', '').lower()
         if http_equiv in ['content-style-type', 'content-type']:
@@ -397,12 +395,15 @@ def handle_deprecated(soup):
             meta.decompose()
             modified = True
     
-    # Remove epub:trigger elements (deprecated in EPUB 3 and cause validation errors)
     for trigger in soup.find_all(['epub:trigger', 'trigger']):
         trigger.decompose()
         modified = True
+    return modified
 
-    # Handle Tags
+
+def convert_deprecated_tags(soup):
+    """Convert deprecated HTML tags (e.g. center, font) to modern CSS equivalents."""
+    modified = False
     for tag_name, (new_name, extra_attrs) in DEPRECATED_ITEMS['tags'].items():
         for tag in soup.find_all(tag_name):
             tag.name = new_name
@@ -414,8 +415,12 @@ def handle_deprecated(soup):
                 else:
                     tag[attr] = val
             modified = True
+    return modified
 
-    # Handle Attributes
+
+def convert_deprecated_attrs(soup):
+    """Convert deprecated HTML attributes to inline CSS styles."""
+    modified = False
     for tag in soup.find_all(True):
         attrs_to_remove = []
         for attr in list(tag.attrs):
@@ -451,23 +456,40 @@ def handle_deprecated(soup):
                 
                 attrs_to_remove.append(attr)
                 modified = True
-            elif is_invalid_custom_data_attribute(attr):
-                attrs_to_remove.append(attr)
-                modified = True
-        
+
         for attr in attrs_to_remove:
             del tag[attr]
+    return modified
 
-    # Convert <a name="..."> to <a id="..."> for EPUB 3 (RSC-012)
+
+def remove_invalid_data_attrs(soup):
+    """Remove invalid custom data attributes (e.g. data-* attributes with invalid characters)."""
+    modified = False
+    for tag in soup.find_all(True):
+        attrs_to_remove = []
+        for attr in list(tag.attrs):
+            if is_invalid_custom_data_attribute(attr):
+                attrs_to_remove.append(attr)
+                modified = True
+        for attr in attrs_to_remove:
+            del tag[attr]
+    return modified
+
+
+def convert_a_name_to_id(soup):
+    """Convert <a name="..."> to <a id="..."> for EPUB 3 (RSC-012)."""
+    modified = False
     for a in soup.find_all('a', attrs={'name': True}):
         if not a.has_attr('id'):
             a['id'] = a['name']
         del a['name']
         modified = True
+    return modified
 
-    # Handle non-registered URI schemes (HTM-025)
-    # EPUB 3 only permits standard/approved schemes (http, https, mailto, tel, data, urn, etc.) or relative paths.
-    # Unregistered schemes are converted to <span> to preserve content and styling without validation issues.
+
+def validate_uri_schemes(soup):
+    """Convert links with non-registered or unapproved URI schemes to span tags (HTM-025)."""
+    modified = False
     APPROVED_SCHEMES = {'http', 'https', 'mailto', 'tel', 'data', 'urn', 'ftp', 'geo', 'sms'}
     for a in soup.find_all('a', attrs={'href': True}):
         href = a['href']
@@ -481,7 +503,24 @@ def handle_deprecated(soup):
                     modified = True
         except Exception:
             pass
+    return modified
 
+
+def handle_deprecated(soup):
+    """Convert deprecated HTML tags and attributes to modern CSS equivalents."""
+    modified = False
+    if cleanup_meta_and_triggers(soup):
+        modified = True
+    if convert_deprecated_tags(soup):
+        modified = True
+    if convert_deprecated_attrs(soup):
+        modified = True
+    if remove_invalid_data_attrs(soup):
+        modified = True
+    if convert_a_name_to_id(soup):
+        modified = True
+    if validate_uri_schemes(soup):
+        modified = True
     return modified
 
 
