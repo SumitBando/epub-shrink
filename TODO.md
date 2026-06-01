@@ -2,7 +2,6 @@
 [TODO] Cleanup: Remove unused `fonttools` dependency from pyproject.toml (declared but never imported)
 
 
-
 # Fix RSC-005: Nested `<a>` tags (`<a>` elements must not appear inside `<a>` elements). (Include a test case).
 
 # Fix validate image files
@@ -27,33 +26,8 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 
 - Explanation https://www.perplexity.ai/search/explain-the-powershell-script-DfzSO_cRQbam2gU8d6Xuew
 
-
-- The <guide> element was the primary suspect because it is a legacy feature from the older EPUB 2 standard that is deprecated in EPUB
-  3.
-
-  Here's the breakdown:
-
-
-   1. Mixed Signals: The sabai-bad.epub file was an EPUB 3 file, but it included the <guide> section, which is an EPUB 2 feature. This
-      sends conflicting information to the reading system (like Google Play Books).
-
-
-   2. Conflicting Cover Definitions:
-       * EPUB 3 (the modern way): Defines the cover image in the <manifest> section using an item with the properties="cover-image"
-         attribute. The bad file had this correct entry.
-       * EPUB 2 (the old way): Used the <guide> section to point to the cover file, among other things (like the table of contents,
-         start page, etc.).
-
-
-  By including the old <guide> section in a new EPUB 3 file, the book was essentially telling the reader, "Here are two different
-  ways to find my important parts." This ambiguity can confuse reading systems, causing them to fail to render the cover correctly.
-
-
-  Removing the <guide> section eliminated this conflict, forcing the reader to use the modern, unambiguous EPUB 3 method to identify
-  the cover image.
-- Check repo https://github.com/martinus/epuboptim
-
 # Completed tasks
+- [x] Optimize: Ensure compressed image files are strictly smaller than their original counterparts, reverting to the original file if compression results in a larger file size.
 - [x] Refactor: Split modernize_assets() god-function (~315 lines, 8 sub-steps) into separate callable functions
 - [x] Refactor: Split handle_deprecated() god-function — separate deprecated tags, deprecated attrs, invalid data-attrs, `<a name>` → `<a id>`, URI scheme validation, and `<meta>`/`<epub:trigger>` cleanup into individual functions
 - [x] Optimize: Improve dynamic image quality reduction algorithm inside epub_shrink.py using a Secant Method (linear interpolation) to mathematically estimate the quality q required to hit the target MB, with safety clamps (strict quality decreases, step caps) and robust fallbacks.

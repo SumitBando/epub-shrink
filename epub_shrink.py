@@ -1325,18 +1325,27 @@ def compress_images(ctx: EpubContext, root, quality, jpg_paths, png_paths, webp_
             if ctx.verbose:
                 image_info = analyze_image_quality(ctx, p)
                 
+            # Create a temporary file to perform compression
+            tmp_path = None
             try:
+                suffix = p.suffix.lower()
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                    tmp_path = pathlib.Path(tmp.name)
+                
+                # Copy original to temp file because CLI tools compress in-place
+                shutil.copy2(p, tmp_path)
+                
                 if quality == 100:
                     if img_type == 'PNG':
-                        oxipng_args = ["oxipng", "-o", "max", "--strip", "all", "--alpha", "--threads", "4", "-q", str(p)]
+                        oxipng_args = ["oxipng", "-o", "max", "--strip", "all", "--alpha", "--threads", "4", "-q", str(tmp_path)]
                         subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
                     elif img_type == 'JPEG':
-                        jpegoptim_args = ["jpegoptim", "--strip-all", "-q", str(p)]
+                        jpegoptim_args = ["jpegoptim", "--strip-all", "-q", str(tmp_path)]
                         subprocess.run(jpegoptim_args, stdout=subprocess.DEVNULL)
                     else:
                         # Lossless fallback for WebP or others
-                        img = Image.open(p)
-                        img.save(p, format=img.format, optimize=True)
+                        with Image.open(p) as img:
+                            img.save(tmp_path, format=img.format, optimize=True)
                 else:
                     if img_type == "PNG":
                         if shutil.which("pngquant"):
@@ -1346,23 +1355,33 @@ def compress_images(ctx: EpubContext, root, quality, jpg_paths, png_paths, webp_
                                 "--skip-if-larger",
                                 "--ext", ".png",
                                 "--quality", f"{max(0, quality-10)}-{quality}",
-                                str(p)
+                                str(tmp_path)
                             ]
                             subprocess.run(pngquant_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         else:
-                            img = Image.open(p)
-                            img = img.convert("P", palette=Image.ADAPTIVE)
-                            img.save(p, format="PNG", optimize=True)
+                            with Image.open(p) as img:
+                                img = img.convert("P", palette=Image.ADAPTIVE)
+                                img.save(tmp_path, format="PNG", optimize=True)
                     else:
-                        img = Image.open(p)
-                        fmt = img.format
-                        if fmt == "JPEG":
-                            img.save(p, format="JPEG", quality=quality, optimize=True, progressive=True)
-                        else:
-                            img.save(p, format=fmt, quality=quality, optimize=True)
+                        with Image.open(p) as img:
+                            fmt = img.format or img_type
+                            if fmt == "JPEG":
+                                img.save(tmp_path, format="JPEG", quality=quality, optimize=True, progressive=True)
+                            else:
+                                img.save(tmp_path, format=fmt, quality=quality, optimize=True)
+                
+                after_size = tmp_path.stat().st_size
+                if after_size < before:
+                    shutil.copy2(tmp_path, p)
             except Exception as e:
                 if ctx.verbose:
                     pbar.write(f"Image compress error: {p} {e}")
+            finally:
+                if tmp_path and tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
             
             after = p.stat().st_size
             total_after += after
