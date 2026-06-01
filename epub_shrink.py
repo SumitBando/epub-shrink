@@ -524,19 +524,16 @@ def handle_deprecated(soup):
     return modified
 
 
-def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
-    """Apply various modernizations to EPUB assets and OPF metadata."""
-    opf_root = tree.getroot()
-    opf_dir = opf_path.parent
-    
-    # 1. Fix NCX if it exists
+def modernize_ncx_and_tours(extract_dir, opf_root, ns):
+    """Fix NCX if it exists and remove obsolete <tours> element."""
     ncx_path = fix_ncx(extract_dir)
-
-    # Remove obsolete <tours> element (RSC-005)
     for tours in opf_root.findall('opf:tours', ns):
         opf_root.remove(tours)
+    return ncx_path
 
-    # 1.5 Cover Image ID Modernization (satisfy Calibre & Nook Color compatibility)
+
+def modernize_cover_image_id(opf_root, manifest, ns):
+    """Modernize cover image ID to satisfy Calibre & Nook Color compatibility."""
     cover_item = None
     # Search cover image via EPUB 3 properties
     cover_item = next((item for item in manifest.values() if 'cover-image' in (item.get('properties') or '').split()), None)
@@ -584,8 +581,11 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
                 prop_list.append('cover-image')
                 cover_item.set('properties', ' '.join(prop_list))
                 print(f"Added properties='cover-image' to cover item {cover_item.get('href')}")
-    
-    # 2. Ensure EPUB 3 navigation document
+    return cover_item
+
+
+def ensure_epub3_navigation(opf_root, manifest, ns, opf_dir, ncx_path):
+    """Ensure there is an EPUB 3 navigation document, generating it from NCX if missing."""
     nav_item = next((item for item in manifest.values() if 'nav' in (item.get('properties') or '').split()), None)
     if nav_item is None and ncx_path:
         nav_href = 'nav.xhtml'
@@ -607,193 +607,196 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
         manifest[nav_href] = new_item
         print(f"Added generated nav.xhtml to manifest as {new_id}")
 
-    # 3. Analyze and fix HTML/CSS files
+
+def modernize_html_and_css_files(opf_dir, manifest, ncx_path):
+    """Analyze and modernize HTML and CSS assets inside the EPUB."""
     ul_disc_needed = False
     html_items = [(h, i) for h, i in manifest.items() if i.get('media-type') == 'application/xhtml+xml']
     
     # Store global ID mappings: id_mappings[file_href][old_id] = new_id
     id_mappings = defaultdict(dict)
     
-    if html_items:
-        pbar = tqdm(html_items, unit="file", desc="Modernizing assets", leave=True)
-        for href, item in pbar:
+    if not html_items:
+        return ul_disc_needed
+
+    pbar = tqdm(html_items, unit="file", desc="Modernizing assets", leave=True)
+    for href, item in pbar:
+        html_path = opf_dir / unquote(href)
+        if not html_path.exists(): continue
+        
+        pbar.set_postfix(file=href[-30:], refresh=False)
+        modified = False
+        try:
+            content = html_path.read_bytes()
+            soup = BeautifulSoup(content, 'lxml-xml')
+
+            # Pass 1: Sanitize IDs and update local links/ARIA attributes within the same file
+            local_id_map = {}
+            for tag in soup.find_all(True, id=True):
+                old_id = tag['id']
+                if not is_valid_xml_id(old_id):
+                    new_id = sanitize_xml_id(old_id)
+                    if new_id and new_id != old_id:
+                        temp_id = new_id
+                        existing_ids = {t.get('id') for t in soup.find_all(True, id=True) if t != tag}
+                        while temp_id in existing_ids:
+                            temp_id = f"{new_id}_{uuid.uuid4().hex[:4]}"
+                        new_id = temp_id
+
+                        tag['id'] = new_id
+                        local_id_map[old_id] = new_id
+                        id_mappings[href][old_id] = new_id
+                        modified = True
+                    elif not new_id:
+                        del tag['id']
+                        modified = True
+
+            if local_id_map:
+                for a in soup.find_all(True, href=True):
+                    a_href = a['href']
+                    if a_href.startswith('#'):
+                        local_anchor = a_href[1:]
+                        if local_anchor in local_id_map:
+                            a['href'] = '#' + local_id_map[local_anchor]
+                            modified = True
+
+                for attr in ['aria-labelledby', 'aria-describedby']:
+                    for tag in soup.find_all(attrs={attr: True}):
+                        target_ids = tag[attr].split()
+                        new_target_ids = [local_id_map.get(tid, tid) for tid in target_ids]
+                        if new_target_ids != target_ids:
+                            tag[attr] = " ".join(new_target_ids)
+                            modified = True
+
+            # Ensure XHTML namespace (RSC-005)
+            html_tag = soup.find('html')
+            if html_tag and not html_tag.has_attr('xmlns'):
+                html_tag['xmlns'] = "http://www.w3.org/1999/xhtml"
+                modified = True
+            
+            # Check for SVG
+            if soup.find('svg'):
+                props = item.get('properties', '')
+                if 'svg' not in (props or '').split():
+                    item.set('properties', ((props or '') + ' svg').strip())
+                    modified = True
+
+            # Handle deprecated tags/attributes
+            if handle_deprecated(soup): modified = True
+
+            # Fix aria attributes referring to missing IDs
+            for attr in ['aria-labelledby', 'aria-describedby']:
+                for tag in soup.find_all(attrs={attr: True}):
+                    target_ids = tag[attr].split()
+                    if not target_ids:
+                        del tag[attr]
+                        modified = True
+                        continue
+
+                    valid_ids = [tid for tid in target_ids if soup.find(id=tid)]
+                    if len(valid_ids) != len(target_ids):
+                        if not valid_ids:
+                            del tag[attr]
+                        else:
+                            tag[attr] = " ".join(valid_ids)
+                        modified = True
+            
+            # Special handling for ul type="disc"
+            for ul in soup.find_all('ul'):
+                if ul.has_attr('type'):
+                    if ul.has_attr('class'):
+                        del ul['type']
+                    elif ul['type'] == 'disc':
+                        ul['class'] = '_ul_disc'
+                        del ul['type']
+                        ul_disc_needed = True
+                    modified = True
+            
+            if modified:
+                html_path.write_text(str(soup), encoding='utf-8')
+        except Exception as e:
+            pbar.write(f"Warning: Error modernizing {href}: {e}")
+    pbar.close()
+
+    # Pass 2: Update cross-file references across all HTML files
+    if id_mappings:
+        pbar_p2 = tqdm(html_items, unit="file", desc="Updating cross-file links", leave=True)
+        for href, item in pbar_p2:
             html_path = opf_dir / unquote(href)
             if not html_path.exists(): continue
             
-            pbar.set_postfix(file=href[-30:], refresh=False)
+            pbar_p2.set_postfix(file=href[-30:], refresh=False)
             modified = False
             try:
                 content = html_path.read_bytes()
                 soup = BeautifulSoup(content, 'lxml-xml')
-
-                # Pass 1: Sanitize IDs and update local links/ARIA attributes within the same file
-                local_id_map = {}
-                # Find all elements with an ID
-                for tag in soup.find_all(True, id=True):
-                    old_id = tag['id']
-                    if not is_valid_xml_id(old_id):
-                        new_id = sanitize_xml_id(old_id)
-                        if new_id and new_id != old_id:
-                            # Avoid collision with an existing valid ID
-                            temp_id = new_id
-                            existing_ids = {t.get('id') for t in soup.find_all(True, id=True) if t != tag}
-                            while temp_id in existing_ids:
-                                temp_id = f"{new_id}_{uuid.uuid4().hex[:4]}"
-                            new_id = temp_id
-
-                            tag['id'] = new_id
-                            local_id_map[old_id] = new_id
-                            id_mappings[href][old_id] = new_id
-                            modified = True
-                        elif not new_id:
-                            # If sanitized ID is completely empty, remove the ID attribute
-                            del tag['id']
-                            modified = True
-
-                if local_id_map:
-                    # Update local href references within the same file (e.g. href="#old_id")
-                    for a in soup.find_all(True, href=True):
-                        a_href = a['href']
-                        if a_href.startswith('#'):
-                            local_anchor = a_href[1:]
-                            if local_anchor in local_id_map:
-                                a['href'] = '#' + local_id_map[local_anchor]
-                                modified = True
-
-                    # Update local ARIA references within the same file
-                    for attr in ['aria-labelledby', 'aria-describedby']:
-                        for tag in soup.find_all(attrs={attr: True}):
-                            target_ids = tag[attr].split()
-                            new_target_ids = [local_id_map.get(tid, tid) for tid in target_ids]
-                            if new_target_ids != target_ids:
-                                tag[attr] = " ".join(new_target_ids)
-                                modified = True
-
-                # Ensure XHTML namespace (RSC-005)
-                html_tag = soup.find('html')
-                if html_tag and not html_tag.has_attr('xmlns'):
-                    html_tag['xmlns'] = "http://www.w3.org/1999/xhtml"
-                    modified = True
                 
-                # Check for SVG
-                if soup.find('svg'):
-                    props = item.get('properties', '')
-                    if 'svg' not in (props or '').split():
-                        item.set('properties', ((props or '') + ' svg').strip())
-                        modified = True
-
-                # Handle deprecated tags/attributes
-                if handle_deprecated(soup): modified = True
-
-                # Fix aria attributes referring to missing IDs
-                for attr in ['aria-labelledby', 'aria-describedby']:
-                    for tag in soup.find_all(attrs={attr: True}):
-                        target_ids = tag[attr].split()
-                        if not target_ids:
-                            del tag[attr]
-                            modified = True
-                            continue
-
-                        valid_ids = [tid for tid in target_ids if soup.find(id=tid)]
-                        if len(valid_ids) != len(target_ids):
-                            if not valid_ids:
-                                del tag[attr]
-                            else:
-                                tag[attr] = " ".join(valid_ids)
-                            modified = True
+                current_dir = os.path.dirname(href)
                 
-                # Special handling for ul type="disc"
-                for ul in soup.find_all('ul'):
-                    if ul.has_attr('type'):
-                        if ul.has_attr('class'):
-                            del ul['type']
-                        elif ul['type'] == 'disc':
-                            ul['class'] = '_ul_disc'
-                            del ul['type']
-                            ul_disc_needed = True
-                        modified = True
-                
+                for a in soup.find_all(True, href=True):
+                    a_href = a['href']
+                    if not a_href.startswith('#') and '#' in a_href:
+                        file_part, anchor_part = a_href.split('#', 1)
+                        target_rel_path = unquote(file_part)
+                        target_abs_path = os.path.normpath(os.path.join(current_dir, target_rel_path)) if current_dir else os.path.normpath(target_rel_path)
+                        
+                        if target_abs_path in id_mappings and anchor_part in id_mappings[target_abs_path]:
+                            new_anchor = id_mappings[target_abs_path][anchor_part]
+                            a['href'] = f"{file_part}#{new_anchor}"
+                            modified = True
+                            
                 if modified:
                     html_path.write_text(str(soup), encoding='utf-8')
             except Exception as e:
-                pbar.write(f"Warning: Error modernizing {href}: {e}")
-        pbar.close()
+                pbar_p2.write(f"Warning: Error updating references in {href}: {e}")
+        pbar_p2.close()
 
-        # Pass 2: Update cross-file references across all HTML files
-        if id_mappings:
-            pbar_p2 = tqdm(html_items, unit="file", desc="Updating cross-file links", leave=True)
-            for href, item in pbar_p2:
-                html_path = opf_dir / unquote(href)
-                if not html_path.exists(): continue
-                
-                pbar_p2.set_postfix(file=href[-30:], refresh=False)
-                modified = False
-                try:
-                    content = html_path.read_bytes()
-                    soup = BeautifulSoup(content, 'lxml-xml')
-                    
-                    current_dir = os.path.dirname(href)
-                    
-                    for a in soup.find_all(True, href=True):
-                        a_href = a['href']
-                        if not a_href.startswith('#') and '#' in a_href:
-                            file_part, anchor_part = a_href.split('#', 1)
-                            target_rel_path = unquote(file_part)
-                            target_abs_path = os.path.normpath(os.path.join(current_dir, target_rel_path)) if current_dir else os.path.normpath(target_rel_path)
-                            
-                            if target_abs_path in id_mappings and anchor_part in id_mappings[target_abs_path]:
-                                new_anchor = id_mappings[target_abs_path][anchor_part]
-                                a['href'] = f"{file_part}#{new_anchor}"
-                                modified = True
-                                
-                    if modified:
-                        html_path.write_text(str(soup), encoding='utf-8')
-                except Exception as e:
-                    pbar_p2.write(f"Warning: Error updating references in {href}: {e}")
-            pbar_p2.close()
-
-            # Update NCX references
-            if ncx_path:
-                try:
-                    ncx_tree = ET.parse(str(ncx_path))
-                    ncx_root = ncx_tree.getroot()
-                    ncx_modified = False
-                    
-                    for content_tag in ncx_root.findall(".//{http://www.daisy.org/z3986/2005/ncx/}content"):
-                        src = content_tag.get('src')
-                        if src and '#' in src:
-                            file_part, anchor_part = src.split('#', 1)
-                            target_rel_path = unquote(file_part)
-                            target_abs_path = os.path.normpath(target_rel_path)
-                            if target_abs_path in id_mappings and anchor_part in id_mappings[target_abs_path]:
-                                new_anchor = id_mappings[target_abs_path][anchor_part]
-                                content_tag.set('src', f"{file_part}#{new_anchor}")
-                                ncx_modified = True
-                    
-                    if ncx_modified:
-                        ncx_tree.write(str(ncx_path), encoding="utf-8", xml_declaration=True)
-                        print("Updated invalid ID references in NCX document")
-                except Exception as e:
-                    print(f"Warning: Error updating NCX link references: {e}")
-
-    # 4. Inject CSS for ul_disc if needed
-    if ul_disc_needed:
-        css_href = next((h for h, m in manifest.items() if m.get('media-type') == 'text/css'), None)
-        if css_href:
-            css_path = opf_dir / css_href
+        # Update NCX references
+        if ncx_path:
             try:
-                with open(css_path, 'a', encoding='utf-8') as f:
-                    f.write('\n._ul_disc { list-style-type: disc; }\n')
+                ncx_tree = ET.parse(str(ncx_path))
+                ncx_root = ncx_tree.getroot()
+                ncx_modified = False
+                
+                for content_tag in ncx_root.findall(".//{http://www.daisy.org/z3986/2005/ncx/}content"):
+                    src = content_tag.get('src')
+                    if src and '#' in src:
+                        file_part, anchor_part = src.split('#', 1)
+                        target_rel_path = unquote(file_part)
+                        target_abs_path = os.path.normpath(target_rel_path)
+                        if target_abs_path in id_mappings and anchor_part in id_mappings[target_abs_path]:
+                            new_anchor = id_mappings[target_abs_path][anchor_part]
+                            content_tag.set('src', f"{file_part}#{new_anchor}")
+                            ncx_modified = True
+                
+                if ncx_modified:
+                    ncx_tree.write(str(ncx_path), encoding="utf-8", xml_declaration=True)
+                    print("Updated invalid ID references in NCX document")
             except Exception as e:
-                print(f"Warning: Error updating CSS {css_href}: {e}")
+                print(f"Warning: Error updating NCX link references: {e}")
+    return ul_disc_needed
 
-    # 5. Modernize Metadata
+
+def inject_ul_disc_css(opf_dir, manifest):
+    """Inject CSS rule for _ul_disc class if needed."""
+    css_href = next((h for h, m in manifest.items() if m.get('media-type') == 'text/css'), None)
+    if css_href:
+        css_path = opf_dir / css_href
+        try:
+            with open(css_path, 'a', encoding='utf-8') as f:
+                f.write('\n._ul_disc { list-style-type: disc; }\n')
+        except Exception as e:
+            print(f"Warning: Error updating CSS {css_href}: {e}")
+
+
+def modernize_opf_metadata(opf_root, manifest, ns, opf_path, cover_item):
+    """Modernize OPF metadata elements to conform to EPUB 3 specifications."""
     metadata = opf_root.find('opf:metadata', ns)
     if metadata is not None:
         for child in list(metadata):
             if not isinstance(child.tag, str):
                 if child.tag is ET.Comment:
-                    continue # Silently preserve comments
+                    continue
                 print(f"Notice: skipping non-element metadata node in {opf_path.name}:{child.sourceline} ({type(child.tag).__name__}): {repr(child.text)}")
                 continue
 
@@ -823,7 +826,6 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
                     child.attrib['content'] = content_val
                 
                 # Check for required attributes (name, property, or refines)
-
                 if not any(attr in child.attrib for attr in ['name', 'property', 'refines']):
                     print(f"Warning: Removing invalid <meta> tag missing required attributes in {opf_path.name}: {ET.tostring(child, encoding='unicode').strip()}")
                     metadata.remove(child)
@@ -852,7 +854,8 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
                     c_meta.set('content', cover_id)
 
 
-    # 6. Standardize Manifest Item Media Types
+def standardize_manifest_media_types(manifest):
+    """Standardize media-types of manifest items in OPF document based on file extensions."""
     media_type_map = {
         '.ttf': 'application/vnd.ms-opentype',
         '.otf': 'application/vnd.ms-opentype',
@@ -873,7 +876,6 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
     }
     for item in manifest.values():
         href = None
-        # Robustly get href
         for attr, val in item.attrib.items():
             if attr == 'href' or attr.endswith('}href'):
                 href = val
@@ -883,7 +885,6 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
         
         ext = os.path.splitext(href.lower())[1]
         if ext in media_type_map:
-            # Robustly get current media-type
             current_type = None
             for attr, val in item.attrib.items():
                 if attr == 'media-type' or attr.endswith('}media-type'):
@@ -893,16 +894,13 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
             new_type = media_type_map[ext]
             if current_type != new_type:
                 print(f"Modernizing media-type for {href}: {current_type} -> {new_type}")
-                # Clean up all versions of media-type attribute to avoid duplicates
                 to_del = [a for a in item.attrib if a == 'media-type' or a.endswith('}media-type')]
                 for a in to_del: del item.attrib[a]
-                # Set plain media-type attribute
                 item.set('media-type', new_type)
 
-    # 7. Set EPUB version to 3.0
-    opf_root.set('version', '3.0')
 
-    # 8. Ensure Non-Linear Content is Reachable (OPF-096)
+def ensure_nonlinear_reachable(opf_root, manifest, ns, opf_dir):
+    """Ensure non-linear content is reachable, adding links to nav.xhtml (OPF-096)."""
     non_linear_items = []
     spine = opf_root.find('opf:spine', ns)
     if spine is not None:
@@ -941,6 +939,40 @@ def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
                 if 'linear' in itemref.attrib:
                     del itemref.attrib['linear']
             print(f"Marked {len(non_linear_items)} non-linear items as linear because nav.xhtml is missing")
+
+
+def modernize_assets(extract_dir, tree, manifest, ns, opf_path):
+    """Apply various modernizations to EPUB assets and OPF metadata."""
+    opf_root = tree.getroot()
+    opf_dir = opf_path.parent
+    
+    # 1. Fix NCX if it exists and remove obsolete <tours> element
+    ncx_path = modernize_ncx_and_tours(extract_dir, opf_root, ns)
+
+    # 1.5 Cover Image ID Modernization
+    cover_item = modernize_cover_image_id(opf_root, manifest, ns)
+    
+    # 2. Ensure EPUB 3 navigation document
+    ensure_epub3_navigation(opf_root, manifest, ns, opf_dir, ncx_path)
+
+    # 3. Analyze and fix HTML/CSS files
+    ul_disc_needed = modernize_html_and_css_files(opf_dir, manifest, ncx_path)
+
+    # 4. Inject CSS for ul_disc if needed
+    if ul_disc_needed:
+        inject_ul_disc_css(opf_dir, manifest)
+
+    # 5. Modernize Metadata
+    modernize_opf_metadata(opf_root, manifest, ns, opf_path, cover_item)
+
+    # 6. Manifest Item Media Type Standardization
+    standardize_manifest_media_types(manifest)
+
+    # 7. Set EPUB version to 3.0
+    opf_root.set('version', '3.0')
+
+    # 8. Ensure Non-Linear Content is Reachable (OPF-096)
+    ensure_nonlinear_reachable(opf_root, manifest, ns, opf_dir)
 
 
 

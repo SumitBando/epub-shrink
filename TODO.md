@@ -1,6 +1,4 @@
 
-[TODO] Refactor: Split modernize_assets() god-function (~315 lines, 8 sub-steps) into separate callable functions
-
 [TODO] Cleanup: Remove unused `fonttools` dependency from pyproject.toml (declared but never imported)
 
 
@@ -56,6 +54,7 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 - Check repo https://github.com/martinus/epuboptim
 
 # Completed tasks
+- [x] Refactor: Split modernize_assets() god-function (~315 lines, 8 sub-steps) into separate callable functions
 - [x] Refactor: Split handle_deprecated() god-function — separate deprecated tags, deprecated attrs, invalid data-attrs, `<a name>` → `<a id>`, URI scheme validation, and `<meta>`/`<epub:trigger>` cleanup into individual functions
 - [x] Optimize: Improve dynamic image quality reduction algorithm inside epub_shrink.py using a Secant Method (linear interpolation) to mathematically estimate the quality q required to hit the target MB, with safety clamps (strict quality decreases, step caps) and robust fallbacks.
 - [x] Fix Invalid ID attributes: Automatically sanitize and correct all invalid XML/HTML ID attributes inside EPUB assets (stripping spaces/nbsp, replacing invalid chars with underscores, prepending 'id_' to digit-starts) and dynamically re-link all internal local and cross-chapter referencing links (including NCX toc and NAV maps) to maintain 100% link integrity.
