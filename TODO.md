@@ -1,4 +1,26 @@
-[TODO] Cleanup: Remove unused `fonttools` dependency from pyproject.toml (declared but never imported)
+[TODO] For input file: '/mnt/c/Users/sumit/Downloads/Frommers Ireland - 31e 2025.epub'
+ERROR: Not a valid font: unpack_from requires a buffer of at least 20332 bytes for unpacking 16 bytes at offset 20316 (actual buffer size is 20328)    [OEBPS/font/AvenirLTPro-Black.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 17436 bytes for unpacking 16 bytes at offset 17420 (actual buffer size is 17424)    [OEBPS/font/AvenirLTPro-BlackOblique.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 21612 bytes for unpacking 16 bytes at offset 21596 (actual buffer size is 21596)    [OEBPS/font/AvenirLTPro-Book.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 19020 bytes for unpacking 16 bytes at offset 19004 (actual buffer size is 19008)    [OEBPS/font/AvenirLTPro-BookOblique.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 21244 bytes for unpacking 16 bytes at offset 21228 (actual buffer size is 21228)    [OEBPS/font/AvenirLTPro-Heavy.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 17196 bytes for unpacking 16 bytes at offset 17180 (actual buffer size is 17192)    [OEBPS/font/AvenirLTPro-HeavyOblique.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 22332 bytes for unpacking 16 bytes at offset 22316 (actual buffer size is 22320)    [OEBPS/font/AvenirLTPro-Light.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 18316 bytes for unpacking 16 bytes at offset 18300 (actual buffer size is 18300)    [OEBPS/font/AvenirLTPro-LightOblique.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 19340 bytes for unpacking 16 bytes at offset 19324 (actual buffer size is 19324)    [OEBPS/font/AvenirLTPro-Medium.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 15516 bytes for unpacking 16 bytes at offset 15500 (actual buffer size is 15512)    [OEBPS/font/AvenirLTPro-MediumOblique.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 15660 bytes for unpacking 16 bytes at offset 15644 (actual buffer size is 15652)    [OEBPS/font/AvenirLTPro-Roman.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 5980 bytes for unpacking 16 bytes at offset 5964 (actual buffer size is 5968)    [OEBPS/font/AvenirLTStd-BlackOblique.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 2892 bytes for unpacking 16 bytes at offset 2876 (actual buffer size is 2876)    [OEBPS/font/AvenirLTStd-Light.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 4140 bytes for unpacking 16 bytes at offset 4124 (actual buffer size is 4136)    [OEBPS/font/AvenirLTStd-Medium.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 45164 bytes for unpacking 16 bytes at offset 45148 (actual buffer size is 45152)    [OEBPS/font/TimesLTPro-Bold.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 29100 bytes for unpacking 16 bytes at offset 29084 (actual buffer size is 29084)    [OEBPS/font/TimesLTPro-BoldItalic.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 30172 bytes for unpacking 16 bytes at offset 30156 (actual buffer size is 30156)    [OEBPS/font/TimesLTPro-Italic.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 55532 bytes for unpacking 16 bytes at offset 55516 (actual buffer size is 55524)    [OEBPS/font/TimesLTPro-Roman.otf]
+ERROR: Not a valid font: unpack_from requires a buffer of at least 7772 bytes for unpacking 16 bytes at offset 7756 (actual buffer size is 7756)    [OEBPS/font/TimesLTStd-Roman.otf]
+
+
+Cleanup: Remove unused `fonttools` dependency from pyproject.toml (declared but never imported)
 
 # Fix RSC-005: Nested `<a>` tags (`<a>` elements must not appear inside `<a>` elements). (Include a test case).
 
@@ -25,6 +47,7 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 - Explanation https://www.perplexity.ai/search/explain-the-powershell-script-DfzSO_cRQbam2gU8d6Xuew
 
 # Completed tasks
+- [x] Fix: Cleanly remove missing/non-existent manifest items (like `../storytel_metadata.json`) from the XML manifest and spine documents, resolving epubcheck validation errors.
 - [x] Optimize: Ensure compressed image files are strictly smaller than their original counterparts, reverting to the original file if compression results in a larger file size.
 - [x] Optimize: Tune adaptive image quality estimation using size-weighted average image quality and implement a step-up quality refinement pass (interpolating/searching back up after overshooting) to hit the target size as closely as possible.
 - [x] Refactor: Split modernize_assets() god-function (~315 lines, 8 sub-steps) into separate callable functions

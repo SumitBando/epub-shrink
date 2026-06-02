@@ -1151,20 +1151,28 @@ def remove_unreferenced(ctx: EpubContext, manifest, tree, ns, root, content_dir=
     for href, node in list(manifest.items()):
         if href not in files_to_keep:
             file_path = content_dir / href
-            if not file_path.exists():
+            size = 0
+            if file_path.exists():
+                size = file_path.stat().st_size
+                file_path.unlink()
+            else:
                 if ctx.verbose:
-                    print(f"File to remove not found on disk: {href}")
-                continue
-            size = file_path.stat().st_size
-            file_path.unlink()
+                    print(f"File to remove not found on disk: {href} (removing from manifest)")
             
             # Remove from XML manifest
             parent = parent_map.get(node)
             if parent is not None:
                 parent.remove(node)
 
+            # Keep in-memory manifest dict in sync
+            if href in manifest:
+                del manifest[href]
+
             if show_summary:
-                print(f"Dropping unreferenced file: {href} ({human(size)})")
+                if size > 0:
+                    print(f"Dropping unreferenced file: {href} ({human(size)})")
+                else:
+                    print(f"Dropping unreferenced missing file reference: {href}")
 
 
 def purge_unwanted_files(ctx: EpubContext, purge_patterns, extract_dir, content_dir, tree, manifest, show_summary=True):
@@ -1228,12 +1236,10 @@ def remove_asset(tree, content_dir, href, manifest_dict=None):
             
         # Remove from disk
         file_path = content_dir / href
-        if not file_path.exists():
-            error_message = f"File not found, could not remove: {href}"
-            print(error_message)
-            raise FileNotFoundError(error_message)
-            
-        file_path.unlink()
+        if file_path.exists():
+            file_path.unlink()
+        else:
+            print(f"Warning: File {href} not found on disk, but removed from manifest/spine.")
         
     except Exception as e:
         print(f"Warning: Could not remove {href}: {e}")
