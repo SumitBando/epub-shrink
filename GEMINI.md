@@ -57,4 +57,4 @@ TODOs are in TODO.md. Add new TODO items at the top of the file
 
 When asking for a new permission, explain why it is needed.
 
-When suggesting a Commit message, only talk about the current task, dont conflate them with previous tasks. Review what is Staged to be commited, and create message based on that. Dont focus only the very last edit, but cumulative Staged changes.
+When suggesting a Commit message, only talk about the current task, dont conflate them with previous tasks. Review what is Staged to be commited, and create message based on that. Dont focus only the very last edit, but cumulative Staged changes. Sometimes we need many iterations to complete a task, some of which may be regressions, do not mention fixing the regression in intermediate steps.

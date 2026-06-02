@@ -70,6 +70,8 @@ class EpubContext:
     input_file: pathlib.Path
     extract_dir: pathlib.Path
     verbose: bool = False
+    max_estimated_quality: int = 0
+    weighted_avg_quality: float = None
 
 
 
@@ -1251,44 +1253,23 @@ def analyze_images(ctx: EpubContext, root, show_summary=True):
         ("WebP", webp_paths)
     ]
     
-    max_estimated_quality = 0
     type_summaries = []
     
-    total_images = sum(len(paths) for _, paths in types)
-    if total_images > 0:
-        pbar = tqdm(total=total_images, unit="img", desc="Analyzing images", leave=True)
-        for name, paths in types:
-            count = len(paths)
-            if count == 0:
-                type_summaries.append(f"0 {name} files")
-                continue
-                
-            size = 0
-            type_max_q = 0
-            for p in paths:
-                full_path = root / p
-                pbar.set_postfix(file=p.name[-30:], refresh=False)
-                size += full_path.stat().st_size
-                info = analyze_image_quality(ctx, full_path)
-                q = info.get("estimated_quality")
-                if q:
-                    type_max_q = max(type_max_q, q)
-                    max_estimated_quality = max(max_estimated_quality, q)
-                pbar.update(1)
+    for name, paths in types:
+        count = len(paths)
+        if count == 0:
+            type_summaries.append(f"0 {name} files")
+            continue
             
-            summary = f"{count} {name} / {human(size)}"
-            if type_max_q > 0:
-                summary += f" (max q: {type_max_q})"
-            type_summaries.append(summary)
-        pbar.close()
-    else:
-        type_summaries = ["0 JPEG files", "0 PNG files", "0 WebP files"]
+        size = sum((root / p).stat().st_size for p in paths)
+        summary = f"{count} {name} / {human(size)}"
+        type_summaries.append(summary)
 
     if show_summary:
         summary_line = f"Found {type_summaries[0]}, {type_summaries[1]} and {type_summaries[2]}"
         print(summary_line)
     
-    return jpg_paths, png_paths, webp_paths, max_estimated_quality
+    return jpg_paths, png_paths, webp_paths
 
 
 def compress_images(ctx: EpubContext, root, quality, jpg_paths, png_paths, webp_paths):
@@ -1301,6 +1282,12 @@ def compress_images(ctx: EpubContext, root, quality, jpg_paths, png_paths, webp_
         (png_paths, 'PNG'),
         (webp_paths, 'WebP')
     ]
+    
+    estimate_quality = ctx.weighted_avg_quality is None
+    if estimate_quality:
+        max_estimated_quality = 0
+        weighted_q_sum = 0
+        total_img_size = 0
     
     for paths, img_type in groups:
         if not paths:
@@ -1322,8 +1309,23 @@ def compress_images(ctx: EpubContext, root, quality, jpg_paths, png_paths, webp_
             total_before += before
             
             image_info = None
-            if ctx.verbose:
+            if estimate_quality or ctx.verbose:
                 image_info = analyze_image_quality(ctx, p)
+                
+            if estimate_quality and image_info and 'error' not in image_info:
+                q_val = image_info.get("estimated_quality")
+                if q_val is not None:
+                    max_estimated_quality = max(max_estimated_quality, q_val)
+                else:
+                    if img_type == "PNG":
+                        q_val = 100
+                    elif img_type == "WebP":
+                        q_val = 95
+                    else:
+                        q_val = 90
+                
+                weighted_q_sum += q_val * before
+                total_img_size += before
                 
             # Create a temporary file to perform compression
             tmp_path = None
@@ -1337,7 +1339,7 @@ def compress_images(ctx: EpubContext, root, quality, jpg_paths, png_paths, webp_
                 
                 if quality == 100:
                     if img_type == 'PNG':
-                        oxipng_args = ["oxipng", "-o", "max", "--strip", "all", "--alpha", "--threads", "4", "-q", str(tmp_path)]
+                        oxipng_args = ["oxipng", "-o", "3", "--strip", "all", "--alpha", "--threads", "4", "-q", str(tmp_path)]
                         subprocess.run(oxipng_args, stdout=subprocess.DEVNULL)
                     elif img_type == 'JPEG':
                         jpegoptim_args = ["jpegoptim", "--strip-all", "-q", str(tmp_path)]
@@ -1411,6 +1413,10 @@ def compress_images(ctx: EpubContext, root, quality, jpg_paths, png_paths, webp_
             reduction_pct = (total_before - total_after) / total_before * 100
             action = "Optimized" if quality == 100 else "Compressed"
             print(f"{action} {img_type}s (q={quality}): {human(total_before)} → {human(total_after)} ({reduction_pct:.1f}% saved)")
+            
+    if estimate_quality:
+        ctx.max_estimated_quality = max_estimated_quality
+        ctx.weighted_avg_quality = (weighted_q_sum / total_img_size) if total_img_size > 0 else 100.0
             
     return savings
 
@@ -1552,31 +1558,41 @@ def estimate_next_quality(
     history: list[tuple[int, int]],
     target_bytes: int,
     ratio: float,
-    max_estimated_quality: int,
+    ctx: EpubContext,
     min_quality: int = 15
 ) -> int:
     """
     Estimate the next quality value based on history of runs using Secant Method (linear interpolation).
+    Uses size-weighted average image quality and power-law estimation for the first lossy pass.
     Clamps the quality drop to ensure it strictly decreases by at least 2 points,
     drops by at most 25 points, and never goes below min_quality.
     """
     q_curr, size_curr = history[-1]
     
     if len(history) < 2:
-        # First lossy pass: we don't have 2 data points yet
-        if q_curr == 100:
-            if ratio > 2.0:
-                q_next = 80
-            elif max_estimated_quality > 0:
-                q_next = min(99, max_estimated_quality - 1)
-            else:
-                q_next = 95
+        # First lossy pass: use the size-weighted average quality and required ratio
+        # to mathematically estimate a starting quality.
+        # S_target / S_lossless = 1.0 / ratio.
+        weighted_avg = ctx.weighted_avg_quality if ctx.weighted_avg_quality is not None else 100.0
+        ref_q = weighted_avg if (q_curr == 100 or weighted_avg < q_curr) else q_curr
+
+        if ref_q > 90.0:
+            # High-quality source images (e.g. q95-100) are extremely compressible near quality 100.
+            # A tiny drop in quality (like dropping 5-10 points) yields a massive size reduction.
+            # We use a linear drop model proportional to the required ratio.
+            drop = 4.0 * (ratio - 1.0)
+            q_est = ref_q - drop
+            q_next = int(round(q_est))
         else:
-            # If started at custom q < 100
-            if ratio > 2.0:
-                q_next = q_curr - 15
-            else:
-                q_next = q_curr - 5
+            # For standard compressed images, we assume a power-law relationship:
+            # S_q / S_lossless = (q / Q_avg) ^ beta
+            # So q = Q_avg * (1.0 / ratio) ^ (1/beta). Using beta = 2.0 is robust.
+            beta = 2.0
+            q_est = ref_q * ((1.0 / ratio) ** (1.0 / beta))
+            q_next = int(round(q_est))
+
+        # Clamp to reasonable starting lossy qualities
+        q_next = max(min_quality, min(95, q_next))
     else:
         # We have at least 2 data points: use the Secant Method
         q_prev, size_prev = history[-2]
@@ -1641,57 +1657,155 @@ def main():
     prune_unreferenced_assets(ctx, tree, manifest, ns, opf_path, show_summary=True)
 
     # 5. Image Analysis (Discovery and Summary)
-    jpg_paths, png_paths, webp_paths, max_estimated_quality = analyze_images(ctx, ctx.extract_dir, show_summary=True)
+    jpg_paths, png_paths, webp_paths = analyze_images(ctx, ctx.extract_dir, show_summary=True)
 
     # 6. Iterative Compression and Rebuild
     q = args.quality
     final_size = 0
-    current_out = None
     history = []
 
-    while True:
-        # Create a fresh build directory from the cleaned extract_dir
-        build_dir = TMP_ROOT / f"epub-build-{os.getpid()}-{q}"
-        if build_dir.exists():
-            shutil.rmtree(build_dir)
-        shutil.copytree(ctx.extract_dir, build_dir)
+    best_meeting_q = None
+    best_meeting_size = None
+    best_meeting_path = None
 
-        # Determine output path for this iteration if not explicitly provided
+    smallest_size_q = None
+    smallest_size = None
+    smallest_size_path = None
+
+    lowest_failing_q = None
+    lowest_failing_size = None
+
+    tried_qualities = set()
+    refinement_steps = 0
+    MAX_REFINEMENT_STEPS = 4
+    MIN_QUALITY = 15
+
+    try:
+        while True:
+            # Avoid repeating the same quality
+            if q in tried_qualities:
+                break
+            tried_qualities.add(q)
+
+            # Create a fresh build directory from the cleaned extract_dir
+            build_dir = TMP_ROOT / f"epub-build-{os.getpid()}-{q}"
+            if build_dir.exists():
+                shutil.rmtree(build_dir)
+            shutil.copytree(ctx.extract_dir, build_dir)
+
+            # Output directly to the original file directory with suffix
+            suffix = "-lossless" if q == 100 else f"-q{q}"
+            iter_out = ctx.input_file.with_stem(f"{ctx.input_file.stem}{suffix}")
+            if iter_out.exists():
+                iter_out.unlink()
+
+            compress_images(ctx, build_dir, q, jpg_paths, png_paths, webp_paths)
+            rebuild_epub(build_dir, iter_out)
+            
+            final_size = iter_out.stat().st_size
+            print(f"Quality {q}: {human(final_size)}")
+
+            # Record this run
+            history.append((q, final_size))
+
+            # Clean up build directory
+            shutil.rmtree(build_dir)
+
+            # Track smallest size for fallback
+            if smallest_size is None or final_size < smallest_size:
+                smallest_size = final_size
+                smallest_size_q = q
+                smallest_size_path = iter_out
+
+            # Check if target is met
+            target_met = not args.targetsize or (final_size / (1024 * 1024) <= args.targetsize)
+
+            if target_met:
+                if best_meeting_q is None or q > best_meeting_q:
+                    best_meeting_q = q
+                    best_meeting_size = final_size
+                    best_meeting_path = iter_out
+            else:
+                if lowest_failing_q is None or q < lowest_failing_q:
+                    lowest_failing_q = q
+                    lowest_failing_size = final_size
+
+            # If no target size or target met with lossless, we stop immediately
+            if not args.targetsize or (q == 100 and target_met):
+                break
+
+            target_bytes = args.targetsize * 1024 * 1024
+
+            if best_meeting_q is None:
+                # We haven't met the target yet, we must decrease quality
+                if q <= MIN_QUALITY:
+                    # We reached the floor and still didn't meet the target
+                    break
+                
+                # Calculate next quality to decrease
+                ratio = final_size / target_bytes
+                q = estimate_next_quality(
+                    history=history,
+                    target_bytes=target_bytes,
+                    ratio=ratio,
+                    ctx=ctx,
+                    min_quality=MIN_QUALITY
+                )
+            else:
+                # We HAVE met the target at least once!
+                # Can we refine to get closer to the target by increasing quality?
+                if lowest_failing_q is None:
+                    # Try to go up towards 100
+                    lowest_failing_q = 100
+
+                gap = lowest_failing_q - best_meeting_q
+                if gap <= 2 or refinement_steps >= MAX_REFINEMENT_STEPS:
+                    break
+
+                # Interpolate to find a better quality in [best_meeting_q + 1, lowest_failing_q - 1]
+                # Use linear interpolation between best_meeting_q and lowest_failing_q
+                size_diff = lowest_failing_size - best_meeting_size
+                q_diff = lowest_failing_q - best_meeting_q
+                
+                if size_diff > 0 and q_diff > 0:
+                    slope = size_diff / q_diff
+                    q_est = best_meeting_q + (target_bytes - best_meeting_size) / slope
+                    q_next = int(round(q_est))
+                else:
+                    q_next = (best_meeting_q + lowest_failing_q) // 2
+                    
+                # Clamp to guarantee progress and stay within the bounds
+                q_next = max(best_meeting_q + 1, min(lowest_failing_q - 1, q_next))
+                
+                print(f"Target met with q={best_meeting_q} ({human(best_meeting_size)}). Refining quality to get closer to target...")
+                q = q_next
+                refinement_steps += 1
+
+        # Determine final output and copy the best file
+        if best_meeting_q is not None:
+            final_q = best_meeting_q
+            final_path = best_meeting_path
+            final_size = best_meeting_size
+        else:
+            final_q = smallest_size_q
+            final_path = smallest_size_path
+            final_size = smallest_size
+
         if args.output:
             current_out = args.output
         else:
-            suffix = "-lossless" if q == 100 else f"-q{q}"
+            suffix = "-lossless" if final_q == 100 else f"-q{final_q}"
             current_out = ctx.input_file.with_stem(f"{ctx.input_file.stem}{suffix}")
 
-        compress_images(ctx, build_dir, q, jpg_paths, png_paths, webp_paths)
-        rebuild_epub(build_dir, current_out)
-        
-        final_size = current_out.stat().st_size
-        print(f"Quality {q}: {human(final_size)}")
+        if final_path and final_path.exists() and final_path != current_out:
+            shutil.copy2(final_path, current_out)
 
-        # Record this run
-        history.append((q, final_size))
+        print(f"\nFinal size: {human(final_size)} (saved {(original_size - final_size) / original_size:.1%}) of original {human(original_size)}")
+        print(f"Output file: {current_out}")
 
-        # Clean up build directory
-        shutil.rmtree(build_dir)
-
-        # Stop if: target reached, no target set, or quality floor reached
-        target_met = not args.targetsize or (final_size / (1024 * 1024) <= args.targetsize)
-        MIN_QUALITY = 15
-        if target_met or q <= MIN_QUALITY:
-            break
-        
-        # Calculate next quality dynamically
-        target_bytes = args.targetsize * 1024 * 1024
-        ratio = final_size / target_bytes
-        
-        q = estimate_next_quality(history, target_bytes, ratio, max_estimated_quality, MIN_QUALITY)
-
-    print(f"\nFinal size: {human(final_size)} (saved {(original_size - final_size) / original_size:.1%}) of original {human(original_size)}")
-    print(f"Output file: {current_out}")
-    
-    if ctx.extract_dir.exists():
-        shutil.rmtree(ctx.extract_dir)
+    finally:
+        if ctx.extract_dir.exists():
+            shutil.rmtree(ctx.extract_dir)
 
 
 if __name__ == "__main__":

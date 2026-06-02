@@ -1,6 +1,4 @@
-
 [TODO] Cleanup: Remove unused `fonttools` dependency from pyproject.toml (declared but never imported)
-
 
 # Fix RSC-005: Nested `<a>` tags (`<a>` elements must not appear inside `<a>` elements). (Include a test case).
 
@@ -28,6 +26,7 @@ ERROR: Unexpected unknown property "font-weigth"    [OEBPS/pdlmsr.css:242]
 
 # Completed tasks
 - [x] Optimize: Ensure compressed image files are strictly smaller than their original counterparts, reverting to the original file if compression results in a larger file size.
+- [x] Optimize: Tune adaptive image quality estimation using size-weighted average image quality and implement a step-up quality refinement pass (interpolating/searching back up after overshooting) to hit the target size as closely as possible.
 - [x] Refactor: Split modernize_assets() god-function (~315 lines, 8 sub-steps) into separate callable functions
 - [x] Refactor: Split handle_deprecated() god-function — separate deprecated tags, deprecated attrs, invalid data-attrs, `<a name>` → `<a id>`, URI scheme validation, and `<meta>`/`<epub:trigger>` cleanup into individual functions
 - [x] Optimize: Improve dynamic image quality reduction algorithm inside epub_shrink.py using a Secant Method (linear interpolation) to mathematically estimate the quality q required to hit the target MB, with safety clamps (strict quality decreases, step caps) and robust fallbacks.
