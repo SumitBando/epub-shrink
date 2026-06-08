@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from lxml import etree as ET
 from fnmatch import fnmatch
 from PIL import Image
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Doctype
 import tinycss2
 from tqdm import tqdm
 
@@ -256,6 +256,7 @@ def generate_nav_from_ncx(ncx_path, nav_path):
         ol_content = process_nav_points(nav_map) if nav_map else "<ol><li><a href=\"index.xhtml\">Contents</a></li></ol>"
         
         nav_content = f"""<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
 <head>
     <title>{title_text_escaped}</title>
@@ -531,6 +532,50 @@ def modernize_ncx_and_tours(extract_dir, opf_root, ns):
     ncx_path = fix_ncx(extract_dir)
     for tours in opf_root.findall('opf:tours', ns):
         opf_root.remove(tours)
+        
+    if ncx_path and ncx_path.exists():
+        # Sync NCX identifier (dtb:uid) with OPF unique identifier
+        unique_id_attr = opf_root.attrib.get('unique-identifier')
+        opf_identifier = None
+        if unique_id_attr:
+            dc_identifier = opf_root.find(f'.//{{http://purl.org/dc/elements/1.1/}}identifier[@id="{unique_id_attr}"]')
+            if dc_identifier is not None and dc_identifier.text:
+                opf_identifier = dc_identifier.text.strip()
+        
+        if not opf_identifier:
+            dc_identifier = opf_root.find('.//{http://purl.org/dc/elements/1.1/}identifier')
+            if dc_identifier is not None and dc_identifier.text:
+                opf_identifier = dc_identifier.text.strip()
+                
+        if opf_identifier:
+            try:
+                with open(ncx_path, 'r', encoding='utf-8') as f:
+                    ncx_soup = BeautifulSoup(f, 'lxml-xml')
+                
+                dtb_uid_meta = None
+                for meta in ncx_soup.find_all('meta'):
+                    if meta.get('name') == 'dtb:uid':
+                        dtb_uid_meta = meta
+                        break
+                
+                if dtb_uid_meta:
+                    if dtb_uid_meta.get('content') != opf_identifier:
+                        print(f"Syncing NCX identifier ('{dtb_uid_meta.get('content')}') to match OPF identifier ('{opf_identifier}')")
+                        dtb_uid_meta['content'] = opf_identifier
+                        with open(ncx_path, 'w', encoding='utf-8') as f:
+                            f.write(str(ncx_soup))
+                else:
+                    head = ncx_soup.find('head')
+                    if head:
+                        # Create missing dtb:uid meta tag
+                        dtb_uid_meta = ncx_soup.new_tag('meta', attrs={'name': 'dtb:uid', 'content': opf_identifier})
+                        head.append(dtb_uid_meta)
+                        print(f"Added missing NCX identifier ('{opf_identifier}')")
+                        with open(ncx_path, 'w', encoding='utf-8') as f:
+                            f.write(str(ncx_soup))
+            except Exception as e:
+                print(f"Warning: Could not sync NCX identifier: {e}")
+                
     return ncx_path
 
 
@@ -631,6 +676,16 @@ def modernize_html_and_css_files(opf_dir, manifest, ncx_path):
         try:
             content = html_path.read_bytes()
             soup = BeautifulSoup(content, 'lxml-xml')
+
+            # Ensure HTML5 DOCTYPE (HTM-004)
+            doctypes = [c for c in soup.contents if isinstance(c, Doctype)]
+            if doctypes:
+                if str(doctypes[0]).strip() != 'html':
+                    doctypes[0].replace_with(Doctype('html'))
+                    modified = True
+            else:
+                soup.insert(0, Doctype('html'))
+                modified = True
 
             # Pass 1: Sanitize IDs and update local links/ARIA attributes within the same file
             local_id_map = {}
@@ -795,6 +850,11 @@ def modernize_opf_metadata(opf_root, manifest, ns, opf_path, cover_item):
     """Modernize OPF metadata elements to conform to EPUB 3 specifications."""
     metadata = opf_root.find('opf:metadata', ns)
     if metadata is not None:
+        VALID_DC_ELEMENTS = {
+            'contributor', 'coverage', 'creator', 'date', 'description', 'format',
+            'identifier', 'language', 'publisher', 'relation', 'rights',
+            'source', 'subject', 'title', 'type'
+        }
         for child in list(metadata):
             if not isinstance(child.tag, str):
                 if child.tag is ET.Comment:
@@ -811,6 +871,14 @@ def modernize_opf_metadata(opf_root, manifest, ns, opf_path, cover_item):
             if child.tag.startswith('{' + ns['dc'] + '}') and not (child.text and child.text.strip()) and not list(child):
                 metadata.remove(child)
                 continue
+
+            # Remove invalid dc metadata elements (e.g. <dc:meta>) (RSC-005)
+            if child.tag.startswith('{' + ns['dc'] + '}'):
+                local_name = child.tag.split('}', 1)[1]
+                if local_name not in VALID_DC_ELEMENTS:
+                    print(f"Warning: Removing invalid Dublin Core element <{child.tag}> from metadata in {opf_path.name}")
+                    metadata.remove(child)
+                    continue
 
             # Handle <meta> tags (RSC-005)
             if child.tag == '{' + ns['opf'] + '}meta':
@@ -1001,15 +1069,39 @@ def extract_refs(tokens, is_import=False):
 
 
 def remove_unreferenced(ctx: EpubContext, manifest, tree, ns, root, content_dir=None, show_summary=True):
-    
+    # Map unquoted path to original manifest key
+    unquoted_manifest = {}
+    for href in manifest:
+        norm_href = unquote(href).replace('\\', '/')
+        unquoted_manifest[norm_href] = href
+
+    # Helper to resolve a raw href (from OPF metadata, HTML, CSS, etc.) to the matching original manifest href
+    def resolve_to_manifest(raw_href, base_dir=None):
+        if not raw_href:
+            return None
+        # Split hash fragment if any
+        raw_href = raw_href.split('#')[0]
+        # Unquote and normalize slashes
+        unquoted_ref = unquote(raw_href).replace('\\', '/')
+        
+        # If there's a base_dir, make it relative to content_dir
+        if base_dir is not None:
+            abs_path = os.path.normpath(os.path.join(base_dir, unquoted_ref))
+            rel_path = os.path.relpath(abs_path, content_dir).replace('\\', '/')
+        else:
+            rel_path = unquoted_ref
+            
+        return unquoted_manifest.get(rel_path)
+
     # 1. Initialize files_to_keep with essential references
     spine_refs = {item.attrib["idref"] for item in tree.findall(".//opf:itemref", ns)}
     files_to_keep = {i.attrib["href"] for i in manifest.values() if i.attrib.get("id") in spine_refs}
 
     for reference in tree.findall(".//opf:guide/opf:reference", ns):
         href = reference.get("href")
-        if href:
-            files_to_keep.add(href)
+        resolved = resolve_to_manifest(href, content_dir)
+        if resolved:
+            files_to_keep.add(resolved)
 
     cover_id = None
     for meta in tree.findall(".//opf:meta[@name='cover']", ns):
@@ -1031,7 +1123,8 @@ def remove_unreferenced(ctx: EpubContext, manifest, tree, ns, root, content_dir=
 
     essential_patterns = ["*.ncx", "nav.xhtml", "*[Cc]ontents*", "*logo*", "META-INF/*"]
     for href in manifest:
-        if any(fnmatch(href, pat) for pat in essential_patterns):
+        unquoted_href = unquote(href).replace('\\', '/')
+        if any(fnmatch(href, pat) or fnmatch(unquoted_href, pat) for pat in essential_patterns):
             files_to_keep.add(href)
 
     # 2. Iteratively find all references by scanning files
@@ -1057,7 +1150,8 @@ def remove_unreferenced(ctx: EpubContext, manifest, tree, ns, root, content_dir=
         
         pbar.set_postfix(file=href[-40:], refresh=False)
 
-        file_path = content_dir / href
+        unquoted_href = unquote(href).replace('\\', '/')
+        file_path = content_dir / unquoted_href
         if not file_path.exists():
             pbar.update(1)
             continue
@@ -1067,51 +1161,72 @@ def remove_unreferenced(ctx: EpubContext, manifest, tree, ns, root, content_dir=
         try:
             # Use binary read and detect encoding if possible, but for performance,
             # we'll stick to a fast read and specific parsing.
-            if href.lower().endswith(('.xhtml', '.html')):
+            is_html = href.lower().endswith(('.xhtml', '.html', '.htm'))
+            if not is_html:
+                manifest_item = manifest.get(href)
+                if manifest_item is not None and manifest_item.get('media-type') == 'application/xhtml+xml':
+                    is_html = True
+            
+            is_css = href.lower().endswith('.css')
+            if not is_css:
+                manifest_item = manifest.get(href)
+                if manifest_item is not None and manifest_item.get('media-type') == 'text/css':
+                    is_css = True
+
+            if is_html:
                 content = file_path.read_bytes()
                 soup = BeautifulSoup(content, 'lxml-xml')
                 
-                # Combined search for speed
-                for tag in soup.find_all(True, attrs={'href': True}):
-                    ref = tag.get('href')
-                    if ref and not ref.startswith(('http', 'data', '#', 'mailto:')):
-                        ref = ref.split('#')[0]
-                        abs_path = os.path.normpath(os.path.join(file_dir, ref))
-                        content_relative_path = os.path.relpath(abs_path, content_dir)
-                        if content_relative_path in manifest and content_relative_path not in seen_queued:
-                            files_to_scan.append(content_relative_path)
-                            seen_queued.add(content_relative_path)
-                            pbar.total += 1
-
-                for tag in soup.find_all(True, attrs={'src': True}):
-                    ref = tag.get('src')
-                    if ref and not ref.startswith(('http', 'data', '#')):
-                        ref = ref.split('#')[0]
-                        abs_path = os.path.normpath(os.path.join(file_dir, ref))
-                        content_relative_path = os.path.relpath(abs_path, content_dir)
-                        if content_relative_path in manifest and content_relative_path not in seen_queued:
-                            files_to_scan.append(content_relative_path)
-                            seen_queued.add(content_relative_path)
-                            pbar.total += 1
+                # Scan all tag attributes for references
+                for tag in soup.find_all(True):
+                    for attr, val in tag.attrs.items():
+                        lower_attr = attr.lower()
+                        if lower_attr in ('href', 'src', 'poster') or lower_attr.endswith(':href') or lower_attr.endswith(':src') or lower_attr.endswith('}href') or lower_attr.endswith('}src'):
+                            resolved = resolve_to_manifest(val, file_dir)
+                            if resolved and resolved not in seen_queued:
+                                files_to_scan.append(resolved)
+                                seen_queued.add(resolved)
+                                pbar.total += 1
                 
                 # Scan style attributes
                 for tag in soup.find_all(True, attrs={'style': True}):
                     try:
                         declarations = tinycss2.parse_declaration_list(tag['style'], skip_comments=True, skip_whitespace=True)
                         for ref in extract_refs(declarations):
-                            if ref and not ref.startswith(('http', 'data', '#')):
-                                ref = ref.split('#')[0]
-                                abs_path = os.path.normpath(os.path.join(file_dir, ref))
-                                content_relative_path = os.path.relpath(abs_path, content_dir)
-                                if content_relative_path in manifest and content_relative_path not in seen_queued:
-                                    files_to_scan.append(content_relative_path)
-                                    seen_queued.add(content_relative_path)
-                                    pbar.total += 1
+                            resolved = resolve_to_manifest(ref, file_dir)
+                            if resolved and resolved not in seen_queued:
+                                files_to_scan.append(resolved)
+                                seen_queued.add(resolved)
+                                pbar.total += 1
                     except Exception:
                         pass
+
+                # Scan style tags in HTML/XHTML
+                for tag in soup.find_all('style'):
+                    style_content = tag.string
+                    if style_content:
+                        try:
+                            rules = tinycss2.parse_stylesheet(style_content, skip_comments=True, skip_whitespace=True)
+                            for rule in rules:
+                                is_import = (rule.type == 'at-rule' and rule.at_keyword == 'import')
+                                all_refs = []
+                                if hasattr(rule, 'prelude') and rule.prelude:
+                                    all_refs.extend(extract_refs(rule.prelude, is_import=is_import))
+                                if hasattr(rule, 'content') and rule.content:
+                                    all_refs.extend(extract_refs(rule.content))
+                                
+                                for ref in all_refs:
+                                    resolved = resolve_to_manifest(ref, file_dir)
+                                    if resolved and resolved not in seen_queued:
+                                        files_to_scan.append(resolved)
+                                        seen_queued.add(resolved)
+                                        pbar.total += 1
+                        except Exception as e:
+                            if ctx.verbose:
+                                pbar.write(f"Error parsing style tag in {href}: {e}")
             
             # Scan CSS for @import, url(), and @font-face
-            elif href.lower().endswith('.css'):
+            elif is_css:
                 content = file_path.read_text(encoding='utf-8', errors='ignore')
                 try:
                     rules = tinycss2.parse_stylesheet(content, skip_comments=True, skip_whitespace=True)
@@ -1124,14 +1239,11 @@ def remove_unreferenced(ctx: EpubContext, manifest, tree, ns, root, content_dir=
                             all_refs.extend(extract_refs(rule.content))
                         
                         for ref in all_refs:
-                            if ref and not ref.startswith(('http', 'data', '#')):
-                                ref = ref.split('#')[0]
-                                abs_path = os.path.normpath(os.path.join(file_dir, ref))
-                                content_relative_path = os.path.relpath(abs_path, content_dir)
-                                if content_relative_path in manifest and content_relative_path not in seen_queued:
-                                    files_to_scan.append(content_relative_path)
-                                    seen_queued.add(content_relative_path)
-                                    pbar.total += 1
+                            resolved = resolve_to_manifest(ref, file_dir)
+                            if resolved and resolved not in seen_queued:
+                                files_to_scan.append(resolved)
+                                seen_queued.add(resolved)
+                                pbar.total += 1
                 except Exception as e:
                     if ctx.verbose:
                         pbar.write(f"Error parsing CSS {href}: {e}")
@@ -1150,7 +1262,7 @@ def remove_unreferenced(ctx: EpubContext, manifest, tree, ns, root, content_dir=
     
     for href, node in list(manifest.items()):
         if href not in files_to_keep:
-            file_path = content_dir / href
+            file_path = content_dir / unquote(href)
             size = 0
             if file_path.exists():
                 size = file_path.stat().st_size
@@ -1235,7 +1347,7 @@ def remove_asset(tree, content_dir, href, manifest_dict=None):
             del manifest_dict[href]
             
         # Remove from disk
-        file_path = content_dir / href
+        file_path = content_dir / unquote(href)
         if file_path.exists():
             file_path.unlink()
         else:
